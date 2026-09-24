@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://cre_price_solver:cre_price_solver@db:5432/cre_price_solver
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cre_price_solver
+      POSTGRES_USER: cre_price_solver
+      POSTGRES_PASSWORD: cre_price_solver
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cre_price_solver -d cre_price_solver"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

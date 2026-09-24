@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run CRE Underwriting App",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\start-local.ps1"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Stop CRE Underwriting App",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\stop-local.ps1"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

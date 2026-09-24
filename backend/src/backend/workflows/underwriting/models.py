@@ -1,0 +1,54 @@
+"""Contracts for a complete stabilized-property underwriting run."""
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+from backend.core.validation import ONE, ZERO, require_positive, require_rate
+from backend.engines.debt import DebtYear
+from backend.engines.disposition import DispositionResult
+from backend.engines.operating import OperatingAssumptions, OperatingYear
+from backend.engines.returns import ReturnMetrics
+
+
+@dataclass(frozen=True, slots=True)
+class UnderwritingAssumptions:
+    """All deal assumptions needed to produce levered annual cash flows."""
+
+    purchase_price: Decimal
+    closing_cost_rate: Decimal
+    loan_to_value: Decimal
+    annual_interest_rate: Decimal
+    amortization_years: int
+    exit_cap_rate: Decimal
+    selling_cost_rate: Decimal
+    operating: OperatingAssumptions
+
+    def __post_init__(self) -> None:
+        require_positive("purchase_price", self.purchase_price)
+        require_rate("closing_cost_rate", self.closing_cost_rate)
+        if not ZERO < self.loan_to_value < ONE:
+            raise ValueError("loan_to_value must be between 0 and 1")
+        require_rate("annual_interest_rate", self.annual_interest_rate)
+        if self.amortization_years < self.operating.hold_period_years:
+            raise ValueError("amortization_years must be at least the hold period")
+        if not ZERO < self.exit_cap_rate < ONE:
+            raise ValueError("exit_cap_rate must be between 0 and 1")
+        require_rate("selling_cost_rate", self.selling_cost_rate)
+
+    @property
+    def loan_amount(self) -> Decimal:
+        return self.purchase_price * self.loan_to_value
+
+    @property
+    def initial_equity(self) -> Decimal:
+        return self.purchase_price * (ONE + self.closing_cost_rate) - self.loan_amount
+
+
+@dataclass(frozen=True, slots=True)
+class UnderwritingResult:
+    operating_projection: tuple[OperatingYear, ...]
+    debt_projection: tuple[DebtYear, ...]
+    terminal_noi: Decimal
+    disposition: DispositionResult
+    annual_cash_flows: tuple[Decimal, ...]
+    returns: ReturnMetrics

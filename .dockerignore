@@ -1,0 +1,10 @@
+.git
+.uv-cache
+backend/.venv
+backend/cre_underwriting.db
+frontend/node_modules
+frontend/.next
+frontend/out
+hosted
+**/__pycache__
+**/*.pyc
