@@ -30,6 +30,16 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
+def _escape_alembic_config_value(value: str) -> str:
+    """Escape percent signs for Alembic's ConfigParser interpolation.
+
+    URL-encoded database passwords can contain percent signs (for example,
+    ``%24`` for ``$``). SQLAlchemy needs the original URL, but ConfigParser
+    requires each percent sign to be doubled when setting a value.
+    """
+    return value.replace("%", "%%")
+
+
 class Database:
     """Own the database engine and sessions used by the HTTP application."""
 
@@ -47,7 +57,7 @@ class Database:
         exist. New databases always receive the migration's DDL.
         """
         config = Config(str(PROJECT_ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", self.url)
+        config.set_main_option("sqlalchemy.url", _escape_alembic_config_value(self.url))
         existing_tables = set(inspect(self.engine).get_table_names())
         application_tables = set(Base.metadata.tables)
         if application_tables.issubset(existing_tables) and "alembic_version" not in existing_tables:

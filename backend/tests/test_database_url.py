@@ -1,6 +1,6 @@
 import unittest
 
-from backend.persistence.database import _normalize_database_url
+from backend.persistence.database import _escape_alembic_config_value, _normalize_database_url
 
 
 class DatabaseUrlTests(unittest.TestCase):
@@ -10,4 +10,12 @@ class DatabaseUrlTests(unittest.TestCase):
         self.assertEqual(
             _normalize_database_url(url),
             "postgresql+psycopg://postgres.project:password@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
+        )
+
+    def test_url_encoded_password_is_escaped_for_alembic_config(self) -> None:
+        url = "postgresql+psycopg://postgres:%24password@example.com/postgres"
+
+        self.assertEqual(
+            _escape_alembic_config_value(url),
+            "postgresql+psycopg://postgres:%%24password@example.com/postgres",
         )
