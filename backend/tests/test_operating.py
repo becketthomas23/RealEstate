@@ -1,7 +1,7 @@
 from decimal import Decimal
 import unittest
 
-from backend.engines.operating import OperatingAssumptions, project_operations
+from backend.engines.operating import OperatingAssumptions, project_monthly_operations, project_operations
 
 
 D = Decimal
@@ -43,6 +43,27 @@ class OperatingEngineTests(unittest.TestCase):
         assumptions = OperatingAssumptions(D("100"), D("200"), D("0.05"), D("0"), D("0"), 5)
 
         self.assertEqual(project_operations(assumptions)[0].net_operating_income, D("-105.00"))
+
+    def test_rent_growth_schedule_overrides_the_base_rate_and_continues_last_rate(self) -> None:
+        assumptions = OperatingAssumptions(
+            D("100000"), D("30000"), D("0.05"), D("0.03"), D("0.02"), 5,
+            annual_rent_growth_rates=(D("0.10"), D("0")),
+        )
+
+        projection = project_operations(assumptions)
+
+        self.assertEqual([year.potential_gross_income for year in projection], [D("110000.00"), D("110000.00"), D("110000.00"), D("110000.00"), D("110000.00")])
+
+    def test_monthly_projection_reconciles_to_annual_projection(self) -> None:
+        annual = project_operations(self.assumptions)
+        monthly = project_monthly_operations(self.assumptions)
+
+        self.assertEqual(len(monthly), 60)
+        self.assertEqual(monthly[0].month, 1)
+        self.assertEqual(monthly[-1].month, 60)
+        for year in annual:
+            months = [item for item in monthly if item.year == year.year]
+            self.assertEqual(sum(item.net_operating_income for item in months), year.net_operating_income)
 
 
 if __name__ == "__main__":

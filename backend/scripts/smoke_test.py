@@ -40,15 +40,20 @@ def request(opener, url: str, *, method: str = "GET", payload: dict | None = Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Smoke-test a deployed CRE price solver.")
-    parser.add_argument("base_url", help="Public application URL, for example https://cre-price-solver.onrender.com")
+    parser.add_argument("base_url", help="API or public application URL, for example https://cre-price-solver.onrender.com")
+    parser.add_argument(
+        "--frontend-url",
+        help="Optional separate frontend URL for local two-port development, for example http://127.0.0.1:3000",
+    )
     parser.add_argument("--password", default=os.getenv("SMOKE_TEST_PASSWORD"), help="Optional shared password; prefer SMOKE_TEST_PASSWORD")
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
+    frontend_url = (args.frontend_url or base_url).rstrip("/")
     opener = build_opener(HTTPCookieProcessor(CookieJar()))
 
     try:
         health_status, _, health = request(opener, f"{base_url}/health")
-        site_status, site_type, _ = request(opener, f"{base_url}/")
+        site_status, site_type, _ = request(opener, f"{frontend_url}/")
         if args.password:
             login_status, _, login = request(opener, f"{base_url}/v1/auth/login", method="POST", payload={"password": args.password})
             if login_status != 200 or login != {"authenticated": True}:

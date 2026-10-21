@@ -43,6 +43,8 @@ class AssumptionSetRecord(Base):
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     effective_date: Mapped[date] = mapped_column(Date, nullable=False)
     confidence_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    property_type: Mapped[str] = mapped_column(String(100), nullable=False, default="Multifamily")
+    value_bucket: Mapped[str] = mapped_column(String(100), nullable=False, default="Custom")
     inputs: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     deal: Mapped[DealRecord] = relationship(back_populates="assumption_sets")

@@ -15,6 +15,7 @@ class MigrationTests(unittest.TestCase):
             try:
                 database.upgrade_schema()
                 table_names = set(inspect(database.engine).get_table_names())
+                assumption_set_columns = {column["name"] for column in inspect(database.engine).get_columns("assumption_sets")}
             finally:
                 database.dispose()
 
@@ -27,3 +28,4 @@ class MigrationTests(unittest.TestCase):
                 "calculation_results",
             }.issubset(table_names)
         )
+        self.assertTrue({"property_type", "value_bucket"}.issubset(assumption_set_columns))

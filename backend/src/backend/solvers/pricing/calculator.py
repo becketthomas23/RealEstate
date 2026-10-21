@@ -8,6 +8,9 @@ from backend.workflows.underwriting import calculate_underwriting
 from .models import MaximumPriceAssumptions, MaximumPriceResult
 
 
+RECOMMENDED_BID_DISCOUNT = Decimal("0.05")
+
+
 def solve_maximum_purchase_price(assumptions: MaximumPriceAssumptions) -> MaximumPriceResult:
     """Find the highest price satisfying the IRR and minimum-DSCR constraints.
 
@@ -25,7 +28,13 @@ def solve_maximum_purchase_price(assumptions: MaximumPriceAssumptions) -> Maximu
 
     for iteration in range(1, assumptions.max_iterations + 1):
         if high - low <= assumptions.price_tolerance:
-            return MaximumPriceResult(low, low_result, iteration - 1)
+            return MaximumPriceResult(
+                maximum_purchase_price=low,
+                recommended_bid_floor=low * (Decimal("1") - RECOMMENDED_BID_DISCOUNT),
+                recommended_bid_ceiling=low,
+                underwriting=low_result,
+                iterations=iteration - 1,
+            )
         midpoint = (low + high) / Decimal("2")
         midpoint_result = _underwrite_at_price(assumptions, midpoint)
         if _meets_constraints(assumptions, midpoint_result):
@@ -40,4 +49,7 @@ def _underwrite_at_price(assumptions: MaximumPriceAssumptions, purchase_price: D
 
 
 def _meets_constraints(assumptions: MaximumPriceAssumptions, result) -> bool:
-    return result.returns.levered_irr >= assumptions.target_levered_irr and result.returns.minimum_dscr >= assumptions.minimum_dscr
+    # DSCR is not applicable to an all-cash acquisition. With no contractual
+    # debt service, it cannot be a binding constraint on the purchase price.
+    dscr_is_satisfied = result.returns.minimum_dscr is None or result.returns.minimum_dscr >= assumptions.minimum_dscr
+    return result.returns.levered_irr >= assumptions.target_levered_irr and dscr_is_satisfied

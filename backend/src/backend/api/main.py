@@ -7,17 +7,30 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Generator
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.engines.operating import OperatingAssumptions
 from backend.solvers.pricing import MaximumPriceAssumptions, solve_maximum_purchase_price
-from backend.workflows.sensitivity import SensitivityAssumptions, calculate_one_way_sensitivities
+from backend.workflows.sensitivity import (
+    AdvancedSensitivityAssumptions,
+    AdvancedSensitivityDimension,
+    SensitivityAssumptions,
+    calculate_advanced_sensitivity,
+    calculate_one_way_sensitivities,
+)
 from backend.workflows.underwriting import UnderwritingAssumptions, calculate_underwriting
+from backend.workflows.monte_carlo import Correlation, MarketContext, MonteCarloAssumptions, SimulationVariable, calculate_monte_carlo
+from backend.workflows.monte_carlo.calibration import calculate_market_calibration, market_calibration_csv_template
+from backend.engines.waterfall import WaterfallAssumptions, calculate_waterfall
+from backend.engines.construction import ConstructionLoanAssumptions, project_construction_loan
+from backend.workflows.development import DevelopmentAssumptions, calculate_development
+from backend.reports import excel_cash_flow, investment_memo
+from backend.imports import parse_underwriting_csv, underwriting_csv_template
 from backend.persistence import Database, Repository
 from backend.persistence.models import AssumptionSetRecord, CalculationRunRecord, DealRecord
 from .access import (
@@ -33,13 +46,21 @@ from .access import (
 
 from .schemas import (
     AssumptionSetCreateRequest,
+    AdvancedSensitivityRequest,
     DealCreateRequest,
     LoginRequest,
     MaximumPriceRequest,
     OperatingAssumptionsRequest,
     SavedMaximumPriceRequest,
+    SavedMonteCarloRequest,
     SavedSensitivityRequest,
+    SavedWaterfallRequest,
+    ScenarioComparisonRequest,
     SensitivityRequest,
+    MonteCarloRequest,
+    WaterfallRequest,
+    ConstructionLoanRequest,
+    DevelopmentRequest,
     UnderwritingRequest,
 )
 
@@ -167,6 +188,144 @@ def sensitivities(request: SensitivityRequest) -> dict[str, Any]:
     return _serialize(result)
 
 
+@app.post("/v1/advanced-sensitivities", tags=["calculations"])
+def advanced_sensitivities(request: AdvancedSensitivityRequest) -> dict[str, Any]:
+    """Calculate a one-, two-, or three-variable direct-return sensitivity grid."""
+    try:
+        result = calculate_advanced_sensitivity(
+            AdvancedSensitivityAssumptions(
+                underwriting=_to_underwriting_assumptions(request.underwriting),
+                dimensions=tuple(
+                    AdvancedSensitivityDimension(item.key, tuple(item.values)) for item in request.dimensions
+                ),
+                metric=request.metric,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(result)
+
+
+@app.post("/v1/monte-carlo", tags=["calculations"])
+def monte_carlo(request: MonteCarloRequest) -> dict[str, Any]:
+    """Run a seeded, confidence-aware Monte Carlo return simulation."""
+    try:
+        result = calculate_monte_carlo(_to_monte_carlo_assumptions(request, _to_underwriting_assumptions(request.underwriting)))
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(result)
+
+
+@app.get("/v1/market-calibrations/template", tags=["calculations"])
+def market_calibration_template() -> StreamingResponse:
+    """Download the aggregate historical data format used for risk calibration."""
+    return StreamingResponse(
+        iter([market_calibration_csv_template()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=market-calibration-template.csv"},
+    )
+
+
+@app.post("/v1/market-calibrations/preview", tags=["calculations"])
+async def preview_market_calibration(
+    file: UploadFile = File(...),
+    property_type: str = Form(...),
+    value_bucket: str = Form(...),
+    source: str = Form("Historical market CSV"),
+) -> dict[str, Any]:
+    """Calculate correlations from a user-supplied aggregate market time series.
+
+    The data is only used to produce this preview response; it is not persisted.
+    """
+    try:
+        calibration = calculate_market_calibration(await file.read(), property_type, value_bucket, source)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(calibration)
+
+
+@app.post("/v1/waterfall", tags=["calculations"])
+def waterfall(request: WaterfallRequest) -> dict[str, Any]:
+    """Allocate underwriting cash flow through the standard LP/sponsor waterfall."""
+    try:
+        underwriting = _to_underwriting_assumptions(request.underwriting)
+        result = calculate_waterfall(
+            WaterfallAssumptions(
+                initial_lp_equity=underwriting.initial_equity,
+                annual_property_cash_flows=calculate_underwriting(underwriting).annual_cash_flows,
+                preferred_return_rate=request.preferred_return_rate,
+                sponsor_residual_share=request.sponsor_residual_share,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(result)
+
+
+@app.post("/v1/construction-loan", tags=["calculations"])
+def construction_loan(request: ConstructionLoanRequest) -> dict[str, Any]:
+    """Calculate construction draws, equity needs, fees, and capitalized interest."""
+    try:
+        result = project_construction_loan(
+            ConstructionLoanAssumptions(
+                monthly_project_costs=tuple(request.monthly_project_costs),
+                loan_to_cost=request.loan_to_cost,
+                annual_interest_rate=request.annual_interest_rate,
+                origination_fee_rate=request.origination_fee_rate,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(result)
+
+
+@app.post("/v1/development", tags=["calculations"])
+def development(request: DevelopmentRequest) -> dict[str, Any]:
+    """Underwrite construction draws through permanent financing and sale."""
+    try:
+        result = calculate_development(_to_development_assumptions(request))
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(result)
+
+
+@app.get("/v1/imports/underwriting-template", tags=["imports"])
+def underwriting_import_template() -> Response:
+    """Download a one-row underwriting CSV template with decimal rate inputs."""
+    return Response(
+        content=underwriting_csv_template(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=underwriting-template.csv"},
+    )
+
+
+@app.post("/v1/imports/underwriting", tags=["imports"])
+async def import_underwriting(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Validate one spreadsheet-export row before an analyst creates a version."""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="upload a .csv underwriting file")
+    try:
+        request = parse_underwriting_csv(await file.read())
+        _to_underwriting_assumptions(request)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return {"underwriting": _serialize(request.model_dump())}
+
+
+@app.post("/v1/exports/excel", tags=["exports"])
+def export_excel(request: UnderwritingRequest):
+    assumptions = _to_underwriting_assumptions(request)
+    result = calculate_underwriting(assumptions)
+    return StreamingResponse(excel_cash_flow(result, assumptions), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition":"attachment; filename=underwriting-cash-flow.xlsx"})
+
+
+@app.post("/v1/exports/memo", tags=["exports"])
+def export_memo(request: UnderwritingRequest):
+    assumptions = _to_underwriting_assumptions(request)
+    result = calculate_underwriting(assumptions)
+    return StreamingResponse(investment_memo(result, assumptions), media_type="application/pdf", headers={"Content-Disposition":"attachment; filename=investment-memo.pdf"})
+
+
 @app.post("/v1/deals", tags=["deals"], status_code=status.HTTP_201_CREATED)
 def create_deal(request: DealCreateRequest, session: Session = Depends(get_session)) -> dict[str, Any]:
     """Create a deal container for immutable assumption-set versions."""
@@ -185,6 +344,65 @@ def get_deal(deal_id: str, session: Session = Depends(get_session)) -> dict[str,
         **_serialize_deal(deal),
         "assumption_sets": [_serialize_assumption_set(item) for item in Repository(session).list_assumption_sets(deal.id)],
     }
+
+
+@app.post("/v1/deals/{deal_id}/scenario-comparison", tags=["deals"])
+def compare_deal_scenarios(
+    deal_id: str,
+    request: ScenarioComparisonRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Apply one set of investment constraints to every saved deal version.
+
+    A failed solver bracket remains in the comparison with its explanation,
+    rather than silently excluding an unfavorable scenario from the review.
+    """
+    repository = Repository(session)
+    _require_deal(repository, deal_id)
+    scenarios = []
+    for assumption_set in repository.list_assumption_sets(deal_id):
+        try:
+            result = solve_maximum_purchase_price(
+                MaximumPriceAssumptions(
+                    underwriting=_stored_underwriting_assumptions(assumption_set),
+                    **request.model_dump(),
+                )
+            )
+        except ValueError as error:
+            scenarios.append(
+                {
+                    "assumption_set_id": assumption_set.id,
+                    "version": assumption_set.version,
+                    "label": assumption_set.label,
+                    "confidence_level": assumption_set.confidence_level,
+                    "maximum_purchase_price": None,
+                    "recommended_bid_floor": None,
+                    "recommended_bid_ceiling": None,
+                    "levered_irr": None,
+                    "minimum_dscr": None,
+                    "equity_multiple": None,
+                    "risk_flags": [],
+                    "error": str(error),
+                }
+            )
+        else:
+            scenarios.append(
+                {
+                    "assumption_set_id": assumption_set.id,
+                    "version": assumption_set.version,
+                    "label": assumption_set.label,
+                    "confidence_level": assumption_set.confidence_level,
+                    "maximum_purchase_price": result.maximum_purchase_price,
+                    "recommended_bid_floor": result.recommended_bid_floor,
+                    "recommended_bid_ceiling": result.recommended_bid_ceiling,
+                    "levered_irr": result.underwriting.returns.levered_irr,
+                    "minimum_dscr": result.underwriting.returns.minimum_dscr,
+                    "equity_multiple": result.underwriting.returns.equity_multiple,
+                    "risk_flags": result.underwriting.risk_flags,
+                    "error": None,
+                }
+            )
+    return _serialize({"constraints": request.model_dump(), "scenarios": scenarios})
 
 
 @app.post("/v1/deals/{deal_id}/assumption-sets", tags=["deals"], status_code=status.HTTP_201_CREATED)
@@ -206,6 +424,8 @@ def create_assumption_set(
         source=request.source,
         effective_date=request.effective_date,
         confidence_level=request.confidence_level,
+        property_type=request.property_type,
+        value_bucket=request.value_bucket,
         inputs=_serialize(request.underwriting.model_dump()),
     )
     return _serialize_assumption_set(assumptions)
@@ -300,6 +520,60 @@ def calculate_saved_sensitivities(
     return {"calculation_run": _serialize_run(run), "result": serialized_result}
 
 
+@app.post("/v1/assumption-sets/{assumption_set_id}/monte-carlo", tags=["deals"], status_code=status.HTTP_201_CREATED)
+def calculate_saved_monte_carlo(
+    assumption_set_id: str,
+    request: SavedMonteCarloRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Simulate an immutable assumption version and retain its exact risk case."""
+    repository = Repository(session)
+    assumptions = _require_assumption_set(repository, assumption_set_id)
+    try:
+        result = calculate_monte_carlo(_to_monte_carlo_assumptions(request, _stored_underwriting_assumptions(assumptions)))
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    serialized_result = _serialize(result)
+    run = repository.create_completed_run(
+        assumption_set=assumptions,
+        calculation_type="monte_carlo",
+        request=_serialize(request.model_dump()),
+        result=serialized_result,
+    )
+    return {"calculation_run": _serialize_run(run), "result": serialized_result}
+
+
+@app.post("/v1/assumption-sets/{assumption_set_id}/waterfall", tags=["deals"], status_code=status.HTTP_201_CREATED)
+def calculate_saved_waterfall(
+    assumption_set_id: str,
+    request: SavedWaterfallRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Allocate a saved version's property cash flow and retain the distribution case."""
+    repository = Repository(session)
+    assumptions = _require_assumption_set(repository, assumption_set_id)
+    try:
+        underwriting = _stored_underwriting_assumptions(assumptions)
+        result = calculate_waterfall(
+            WaterfallAssumptions(
+                initial_lp_equity=underwriting.initial_equity,
+                annual_property_cash_flows=calculate_underwriting(underwriting).annual_cash_flows,
+                preferred_return_rate=request.preferred_return_rate,
+                sponsor_residual_share=request.sponsor_residual_share,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    serialized_result = _serialize(result)
+    run = repository.create_completed_run(
+        assumption_set=assumptions,
+        calculation_type="waterfall",
+        request=_serialize(request.model_dump()),
+        result=serialized_result,
+    )
+    return {"calculation_run": _serialize_run(run), "result": serialized_result}
+
+
 @app.get("/v1/calculation-runs/{run_id}", tags=["deals"])
 def get_calculation_run(run_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
     run = Repository(session).get_run(run_id)
@@ -317,6 +591,50 @@ def _to_underwriting_assumptions(request: UnderwritingRequest) -> UnderwritingAs
 
 def _to_operating_assumptions(request: OperatingAssumptionsRequest) -> OperatingAssumptions:
     return OperatingAssumptions(**request.model_dump())
+
+
+def _to_monte_carlo_assumptions(request: Any, underwriting: UnderwritingAssumptions) -> MonteCarloAssumptions:
+    context = request.market_context
+    return MonteCarloAssumptions(
+        underwriting=underwriting,
+        variables=tuple(
+            SimulationVariable(
+                key=item.key,
+                confidence_level=item.confidence_level,
+                confidence_percentage=item.confidence_percentage,
+                minimum=item.minimum,
+                maximum=item.maximum,
+            )
+            for item in request.variables
+        ),
+        iterations=request.iterations,
+        seed=request.seed,
+        target_levered_irr=request.target_levered_irr,
+        correlations=tuple(
+            Correlation(item.first_key, item.second_key, item.coefficient)
+            for item in request.correlations
+        ),
+        market_context=(
+            MarketContext(
+                property_type=context.property_type,
+                value_bucket=context.value_bucket,
+                source=context.source,
+                observations=context.observations,
+                period_start=context.period_start,
+                period_end=context.period_end,
+            )
+            if context
+            else None
+        ),
+    )
+
+
+def _to_development_assumptions(request: DevelopmentRequest) -> DevelopmentAssumptions:
+    return DevelopmentAssumptions(
+        construction=ConstructionLoanAssumptions(**request.construction.model_dump()),
+        operating=_to_operating_assumptions(request.operating),
+        **request.model_dump(exclude={"construction", "operating"}),
+    )
 
 
 def _to_sensitivity_assumptions(
@@ -367,6 +685,8 @@ def _serialize_assumption_set(assumptions: AssumptionSetRecord) -> dict[str, Any
             "source": assumptions.source,
             "effective_date": assumptions.effective_date,
             "confidence_level": assumptions.confidence_level,
+            "property_type": assumptions.property_type,
+            "value_bucket": assumptions.value_bucket,
             "underwriting": assumptions.inputs,
             "created_at": assumptions.created_at,
         }

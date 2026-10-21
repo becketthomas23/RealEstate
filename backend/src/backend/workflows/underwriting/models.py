@@ -6,8 +6,9 @@ from decimal import Decimal
 from backend.core.validation import ONE, ZERO, require_positive, require_rate
 from backend.engines.debt import DebtYear
 from backend.engines.disposition import DispositionResult
-from backend.engines.operating import OperatingAssumptions, OperatingYear
+from backend.engines.operating import OperatingAssumptions, OperatingMonth, OperatingYear
 from backend.engines.returns import ReturnMetrics
+from backend.engines.risk import RiskFlag
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +27,8 @@ class UnderwritingAssumptions:
     def __post_init__(self) -> None:
         require_positive("purchase_price", self.purchase_price)
         require_rate("closing_cost_rate", self.closing_cost_rate)
-        if not ZERO < self.loan_to_value < ONE:
-            raise ValueError("loan_to_value must be between 0 and 1")
+        if not ZERO <= self.loan_to_value < ONE:
+            raise ValueError("loan_to_value must be between 0 (inclusive) and 1")
         require_rate("annual_interest_rate", self.annual_interest_rate)
         if self.amortization_years < self.operating.hold_period_years:
             raise ValueError("amortization_years must be at least the hold period")
@@ -47,8 +48,13 @@ class UnderwritingAssumptions:
 @dataclass(frozen=True, slots=True)
 class UnderwritingResult:
     operating_projection: tuple[OperatingYear, ...]
+    monthly_operating_projection: tuple[OperatingMonth, ...]
     debt_projection: tuple[DebtYear, ...]
     terminal_noi: Decimal
+    going_in_cap_rate: Decimal
+    debt_yield: Decimal | None
     disposition: DispositionResult
+    annual_operating_cash_flows: tuple[Decimal, ...]
     annual_cash_flows: tuple[Decimal, ...]
     returns: ReturnMetrics
+    risk_flags: tuple[RiskFlag, ...]

@@ -7,5 +7,8 @@ __pycache__/
 .env
 .env.*
 
+# Local QA artifacts
+tmp/
+
 # Local shell history
 .Rhistory

@@ -40,3 +40,17 @@ class SensitivityTests(unittest.TestCase):
         result = calculate_one_way_sensitivities(replace(self.assumptions, underwriting=zero_rate))
 
         self.assertEqual([point.value for point in result.dimensions[2].points], [D("0"), D("0.01")])
+
+    def test_shifts_the_full_rent_growth_schedule_without_replacing_it(self) -> None:
+        scheduled = replace(
+            self.assumptions.underwriting,
+            operating=replace(self.assumptions.underwriting.operating, annual_rent_growth_rates=(D("0.02"), D("0.03"))),
+        )
+
+        result = calculate_one_way_sensitivities(replace(self.assumptions, underwriting=scheduled))
+        rent = result.dimensions[0]
+
+        self.assertEqual(rent.label, "Rent-growth schedule")
+        self.assertEqual([point.value for point in rent.points], [None, None, None])
+        self.assertIn("every scheduled", rent.description)
+        self.assertGreater(rent.points[2].maximum_purchase_price, rent.points[0].maximum_purchase_price)

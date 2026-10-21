@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from backend.core.validation import ZERO, require_positive, require_rate
+from backend.core.validation import ZERO, require_positive, require_return_rate
 from backend.workflows.underwriting import UnderwritingAssumptions, UnderwritingResult
 
 
@@ -18,7 +18,7 @@ class MaximumPriceAssumptions:
     max_iterations: int = 100
 
     def __post_init__(self) -> None:
-        require_rate("target_levered_irr", self.target_levered_irr, allow_negative=True)
+        require_return_rate("target_levered_irr", self.target_levered_irr)
         require_positive("minimum_dscr", self.minimum_dscr)
         require_positive("minimum_purchase_price", self.minimum_purchase_price)
         require_positive("maximum_purchase_price", self.maximum_purchase_price)
@@ -32,5 +32,7 @@ class MaximumPriceAssumptions:
 @dataclass(frozen=True, slots=True)
 class MaximumPriceResult:
     maximum_purchase_price: Decimal
+    recommended_bid_floor: Decimal
+    recommended_bid_ceiling: Decimal
     underwriting: UnderwritingResult
     iterations: int

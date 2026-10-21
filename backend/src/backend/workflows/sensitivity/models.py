@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from backend.core.validation import require_positive, require_rate
+from backend.core.validation import require_positive, require_return_rate
 from backend.workflows.underwriting import UnderwritingAssumptions
 
 
@@ -20,7 +20,7 @@ class SensitivityAssumptions:
     max_iterations: int = 100
 
     def __post_init__(self) -> None:
-        require_rate("target_levered_irr", self.target_levered_irr, allow_negative=True)
+        require_return_rate("target_levered_irr", self.target_levered_irr)
         require_positive("minimum_dscr", self.minimum_dscr)
         require_positive("minimum_purchase_price", self.minimum_purchase_price)
         require_positive("maximum_purchase_price", self.maximum_purchase_price)
@@ -34,7 +34,7 @@ class SensitivityAssumptions:
 @dataclass(frozen=True, slots=True)
 class SensitivityPoint:
     label: str
-    value: Decimal
+    value: Decimal | None
     maximum_purchase_price: Decimal | None
     error: str | None
 
@@ -45,6 +45,7 @@ class SensitivityDimension:
     label: str
     unit: str
     points: tuple[SensitivityPoint, ...]
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

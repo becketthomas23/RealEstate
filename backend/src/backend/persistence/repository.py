@@ -41,6 +41,8 @@ class Repository:
         source: str | None,
         effective_date: date,
         confidence_level: str,
+        property_type: str,
+        value_bucket: str,
         inputs: dict[str, Any],
     ) -> AssumptionSetRecord:
         latest_version = self.session.scalar(
@@ -53,6 +55,8 @@ class Repository:
             source=source,
             effective_date=effective_date,
             confidence_level=confidence_level,
+            property_type=property_type,
+            value_bucket=value_bucket,
             inputs=inputs,
         )
         deal.updated_at = datetime.now(timezone.utc)

@@ -14,6 +14,7 @@ class OperatingAssumptions:
     rent_growth_rate: Decimal
     expense_growth_rate: Decimal
     hold_period_years: int
+    annual_rent_growth_rates: tuple[Decimal, ...] | None = None
 
     def __post_init__(self) -> None:
         require_positive("current_potential_gross_income", self.current_potential_gross_income)
@@ -23,15 +24,58 @@ class OperatingAssumptions:
         require_rate("expense_growth_rate", self.expense_growth_rate, allow_negative=True)
         if not 5 <= self.hold_period_years <= 10:
             raise ValueError("hold_period_years must be between 5 and 10")
+        if self.annual_rent_growth_rates is not None:
+            schedule = tuple(self.annual_rent_growth_rates)
+            if not schedule:
+                raise ValueError("annual_rent_growth_rates must not be empty when supplied")
+            if len(schedule) > self.hold_period_years:
+                raise ValueError("annual_rent_growth_rates cannot exceed hold_period_years")
+            for rate in schedule:
+                require_rate("annual_rent_growth_rates", rate, allow_negative=True)
+            object.__setattr__(self, "annual_rent_growth_rates", schedule)
 
     @property
     def current_noi(self) -> Decimal:
         return self.current_potential_gross_income * (ONE - self.vacancy_rate) - self.current_operating_expenses
 
+    def rent_growth_rate_for_year(self, year: int) -> Decimal:
+        """Return the growth rate for a projection year.
+
+        A supplied schedule overrides the base rate in order.  If the hold or
+        terminal year extends beyond that schedule, its final explicit rate is
+        continued.  This makes a partially entered schedule deterministic while
+        still permitting a single base assumption.
+        """
+        if year < 1:
+            raise ValueError("year must be at least 1")
+        if not self.annual_rent_growth_rates:
+            return self.rent_growth_rate
+        return self.annual_rent_growth_rates[min(year - 1, len(self.annual_rent_growth_rates) - 1)]
+
 
 @dataclass(frozen=True, slots=True)
 class OperatingYear:
     year: int
+    potential_gross_income: Decimal
+    vacancy_loss: Decimal
+    effective_gross_income: Decimal
+    operating_expenses: Decimal
+    net_operating_income: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class OperatingMonth:
+    """Monthly view of the annual operating projection.
+
+    The current stabilized model applies each annual growth assumption at the
+    start of its projection year, then allocates that year's annual operating
+    amounts evenly across its twelve months.  Monthly values therefore roll up
+    exactly to the audited annual pro forma.
+    """
+
+    month: int
+    year: int
+    month_in_year: int
     potential_gross_income: Decimal
     vacancy_loss: Decimal
     effective_gross_income: Decimal

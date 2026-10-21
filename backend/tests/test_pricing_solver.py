@@ -29,6 +29,8 @@ class MaximumPriceSolverTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(float(result.maximum_purchase_price), 1083333.33, places=2)
+        self.assertEqual(result.recommended_bid_floor, result.maximum_purchase_price * D("0.95"))
+        self.assertEqual(result.recommended_bid_ceiling, result.maximum_purchase_price)
         self.assertGreaterEqual(result.underwriting.returns.levered_irr, D("0.10"))
         self.assertGreaterEqual(result.underwriting.returns.minimum_dscr, D("1.00"))
 
@@ -40,3 +42,16 @@ class MaximumPriceSolverTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "higher bound"):
             solve_maximum_purchase_price(assumptions)
+
+    def test_accepts_a_high_return_target_but_rejects_an_invalid_irr_floor(self) -> None:
+        high_target = MaximumPriceAssumptions(
+            underwriting=self.underwriting, target_levered_irr=D("1.50"), minimum_dscr=D("1.00"),
+            minimum_purchase_price=D("500000"), maximum_purchase_price=D("1500000"),
+        )
+
+        self.assertEqual(high_target.target_levered_irr, D("1.50"))
+        with self.assertRaisesRegex(ValueError, "greater than -1"):
+            MaximumPriceAssumptions(
+                underwriting=self.underwriting, target_levered_irr=D("-1"), minimum_dscr=D("1.00"),
+                minimum_purchase_price=D("500000"), maximum_purchase_price=D("1500000"),
+            )
