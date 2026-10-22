@@ -90,7 +90,7 @@ def excel_cash_flow(result, assumptions=None, report=None):
     return output
 
 
-def investment_memo(result, assumptions=None, report=None):
+def investment_memo(result, assumptions=None, report=None, detail=None):
     """Build a PDF memo whose language is tied to the stated return target."""
     output = BytesIO()
     doc = SimpleDocTemplate(output, pagesize=letter, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42)
@@ -101,6 +101,7 @@ def investment_memo(result, assumptions=None, report=None):
     body.spaceBefore = 0
     body.spaceAfter = 0
     report = report or {}
+    detail = detail or {}
 
     irr = float(result.returns.levered_irr)
     dscr = float(result.returns.minimum_dscr) if result.returns.minimum_dscr is not None else None
@@ -129,6 +130,8 @@ def investment_memo(result, assumptions=None, report=None):
         ["Analysis purchase price", _money(result.purchase_price)],
         ["Loan amount / initial equity", f"{_money(result.loan_amount)} / {_money(result.initial_equity)}"],
         ["Going-in cap rate (Year 1 NOI / price)", f"{float(result.going_in_cap_rate):.2%}"],
+        ["Unlevered IRR / multiple", (f"{float(result.unlevered.irr):.1%} / " if result.unlevered.irr is not None else "n/a / ") + f"{float(result.unlevered.multiple):.2f}x"],
+        ["Levered profit", _money(result.levered_profit)],
         ["Debt yield", f"{float(result.debt_yield):.2%}" if result.debt_yield is not None else "N/A — all-cash"],
         ["Levered IRR", f"{irr:.1%}" + (f" (target {float(target):.1%})" if target is not None else "")],
         ["Equity multiple", f"{float(result.returns.equity_multiple):.2f}x"],
@@ -137,6 +140,18 @@ def investment_memo(result, assumptions=None, report=None):
         ["Net sale proceeds to equity", _money(result.disposition.net_sale_proceeds_to_equity)],
     ]
     story += [_table(rows, [250, 190], HEADER_FILL), Spacer(1, 8)]
+    property_detail = detail.get("property") or {}
+    if property_detail.get("units") or property_detail.get("rentable_square_feet"):
+        year_one = result.operating_projection[0]
+        metric_rows = [["Metric", "Value"]]
+        if property_detail.get("units"):
+            units = float(property_detail["units"])
+            metric_rows += [["Units", f"{units:,.0f}"], ["Price per unit", _money(float(result.purchase_price) / units)], ["Year 1 NOI per unit", _money(float(year_one.net_operating_income) / units)]]
+        if property_detail.get("rentable_square_feet"):
+            square_feet = float(property_detail["rentable_square_feet"])
+            metric_rows += [["Rentable square feet", f"{square_feet:,.0f}"], ["Price per SF", f"${float(result.purchase_price) / square_feet:,.2f}"], ["Year 1 NOI per SF", f"${float(year_one.net_operating_income) / square_feet:,.2f}"]]
+        metric_rows.append(["Year 1 expense ratio (OpEx / EGI)", f"{float(year_one.operating_expenses / year_one.effective_gross_income):.1%}" if year_one.effective_gross_income else "n/a"])
+        story += [Paragraph("Property metrics", styles["Heading2"]), _table(metric_rows, [250, 190], HEADER_FILL, font_size=8.5), Spacer(1, 8)]
 
     story.append(Paragraph("Annual cash flow", styles["Heading2"]))
     cash_rows = [["Year", "NOI", "Debt service", "Recurring CF", "Cash-on-cash", "Total CF"]]

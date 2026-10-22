@@ -72,6 +72,47 @@ class DealRenameRequest(DealCreateRequest):
     """A new display name for an existing deal."""
 
 
+class PropertyDetailRequest(ApiModel):
+    """Descriptive property facts that drive per-unit and per-square-foot metrics."""
+
+    name: str | None = Field(default=None, max_length=200)
+    address: str | None = Field(default=None, max_length=500)
+    units: int | None = Field(default=None, ge=1, le=100_000)
+    rentable_square_feet: Decimal | None = Field(default=None, gt=0)
+    year_built: int | None = Field(default=None, ge=1600, le=2100)
+    property_class: str | None = Field(default=None, max_length=20)
+
+
+class RentRollLineRequest(ApiModel):
+    unit_type: str = Field(min_length=1, max_length=100)
+    units: int = Field(ge=1, le=100_000)
+    average_square_feet: Decimal | None = Field(default=None, gt=0)
+    current_monthly_rent: Decimal = Field(ge=0)
+    market_monthly_rent: Decimal | None = Field(default=None, ge=0)
+
+
+class IncomeLineRequest(ApiModel):
+    category: str = Field(min_length=1, max_length=100)
+    annual_amount: Decimal = Field(ge=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ExpenseLineRequest(ApiModel):
+    category: str = Field(min_length=1, max_length=100)
+    annual_amount: Decimal = Field(ge=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class SupportingDetailRequest(ApiModel):
+    """Optional detail behind the aggregate inputs, kept with the version for exports."""
+
+    property: PropertyDetailRequest | None = None
+    rent_roll: list[RentRollLineRequest] = Field(default_factory=list, max_length=200)
+    other_income: list[IncomeLineRequest] = Field(default_factory=list, max_length=100)
+    operating_expenses: list[ExpenseLineRequest] = Field(default_factory=list, max_length=100)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
 class AssumptionSetCreateRequest(ApiModel):
     """A named, immutable set of inputs with the context needed to audit it."""
 
@@ -82,6 +123,7 @@ class AssumptionSetCreateRequest(ApiModel):
     property_type: str = Field(default="Multifamily", min_length=1, max_length=100)
     value_bucket: str = Field(default="Custom", min_length=1, max_length=100)
     underwriting: UnderwritingRequest
+    supporting_detail: SupportingDetailRequest | None = None
 
     @field_validator("label")
     @classmethod
@@ -129,6 +171,8 @@ class SimulationVariableRequest(ApiModel):
     confidence_percentage: Decimal = Field(ge=0, le=100)
     minimum: Decimal | None = None
     maximum: Decimal | None = None
+    distribution: Literal["uniform", "triangular", "normal"] = "triangular"
+    mode: Decimal | None = None
 
 
 class CorrelationRequest(ApiModel):
@@ -153,6 +197,7 @@ class MonteCarloRequest(ApiModel):
     iterations: int = Field(default=1_000, ge=100, le=10_000)
     seed: int = 0
     target_levered_irr: Decimal | None = None
+    minimum_dscr: Decimal | None = Field(default=None, gt=0)
     correlations: list[CorrelationRequest] = Field(default_factory=list, max_length=10)
     market_context: MarketContextRequest | None = None
 
@@ -170,6 +215,7 @@ class SavedMonteCarloRequest(ApiModel):
     iterations: int = Field(default=1_000, ge=100, le=10_000)
     seed: int = 0
     target_levered_irr: Decimal | None = None
+    minimum_dscr: Decimal | None = Field(default=None, gt=0)
     correlations: list[CorrelationRequest] = Field(default_factory=list, max_length=10)
     market_context: MarketContextRequest | None = None
     purchase_price: Decimal | None = Field(default=None, gt=0)
@@ -231,11 +277,27 @@ class ReportContext(ApiModel):
     binding_constraint: str | None = Field(default=None, max_length=50)
 
 
+class ExportSimulationRequest(ApiModel):
+    """Simulation settings an export should run so the workbook carries a Risk sheet."""
+
+    variables: list[SimulationVariableRequest] = Field(min_length=1, max_length=5)
+    iterations: int = Field(default=1_000, ge=100, le=10_000)
+    seed: int = 0
+    correlations: list[CorrelationRequest] = Field(default_factory=list, max_length=10)
+    market_context: MarketContextRequest | None = None
+
+
 class ExportRequest(UnderwritingRequest):
     """An underwriting case plus optional reporting context.
 
     The case's ``purchase_price`` is the price the report describes, so a
     caller that wants the solved maximum price in the report passes it here.
+    ``supporting_detail`` adds rent-roll and expense sheets, ``simulation``
+    adds a Risk sheet, and ``include_sensitivity`` adds sensitivity grids
+    computed at the analysis price.
     """
 
     report: ReportContext | None = None
+    supporting_detail: SupportingDetailRequest | None = None
+    simulation: ExportSimulationRequest | None = None
+    include_sensitivity: bool = True

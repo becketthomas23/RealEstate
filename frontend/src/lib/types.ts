@@ -16,6 +16,7 @@ export const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
 };
 
 export type ConfidenceLevel = "low" | "medium" | "high";
+export type Distribution = "uniform" | "triangular" | "normal";
 
 /** Form state: strings as typed, decimal rates stored as decimals. */
 export type DealForm = {
@@ -58,6 +59,50 @@ export type UnderwritingInputs = {
   exit_cap_rate: string;
   selling_cost_rate: string;
   operating: OperatingInputs;
+};
+
+export type PropertyDetail = {
+  name: string | null;
+  address: string | null;
+  units: number | null;
+  rentable_square_feet: string | null;
+  year_built: number | null;
+  property_class: string | null;
+};
+
+export type RentRollLine = {
+  unit_type: string;
+  units: number;
+  average_square_feet: string | null;
+  current_monthly_rent: string;
+  market_monthly_rent: string | null;
+};
+
+export type AmountLine = { category: string; annual_amount: string; note: string | null };
+
+export type SupportingDetail = {
+  property: PropertyDetail | null;
+  rent_roll: RentRollLine[];
+  other_income: AmountLine[];
+  operating_expenses: AmountLine[];
+  notes: string | null;
+};
+
+export const EMPTY_DETAIL: SupportingDetail = { property: null, rent_roll: [], other_income: [], operating_expenses: [], notes: null };
+
+export type WorkbookImportResult = {
+  underwriting: UnderwritingInputs;
+  supporting_detail: SupportingDetail;
+  version: {
+    label: string | null;
+    source: string | null;
+    effective_date: string | null;
+    confidence_level: ConfidenceLevel;
+    property_type: string | null;
+  };
+  targets: { target_levered_irr: string | null; minimum_dscr: string | null };
+  warnings: string[];
+  sources: Record<string, string>;
 };
 
 export type RiskFlag = {
@@ -114,6 +159,15 @@ export type UnderwritingResult = {
     cash_on_cash_by_year: string[];
     dscr_by_year: string[];
   };
+  unlevered?: {
+    annual_cash_flows: string[];
+    irr: string | null;
+    multiple: string;
+    total_cost: string;
+    profit: string;
+  };
+  levered_profit?: string;
+  annual_debt_yield?: string[] | null;
   risk_flags: RiskFlag[];
 };
 
@@ -153,11 +207,16 @@ export type GridResult = {
 export type SimulationSummary = {
   metric: string;
   minimum: string;
+  percentile_5?: string;
   percentile_10: string;
+  percentile_25?: string;
   percentile_50: string;
+  percentile_75?: string;
   percentile_90: string;
+  percentile_95?: string;
   maximum: string;
   mean: string;
+  standard_deviation?: string;
   probability_meeting_target: string | null;
 };
 
@@ -198,6 +257,10 @@ export type DriverImpact = {
   relative_influence: string;
   cash_flow_change_per_100_bps: string;
   irr_change_per_100_bps: string;
+  irr_at_low?: string | null;
+  irr_at_high?: string | null;
+  sampled_low?: string;
+  sampled_high?: string;
 };
 
 export type RepresentativeCase = {
@@ -206,18 +269,38 @@ export type RepresentativeCase = {
   values: Record<string, string>;
 };
 
+export type SampledRange = { key: SensitivityKey; distribution: Distribution; minimum: string; mode: string; maximum: string };
+export type HistogramBin = { lower: string; upper: string; count: number };
+
 export type SimulationResult = {
   iterations: number;
   seed: number;
+  sampled_ranges?: SampledRange[];
   levered_irr: SimulationSummary;
   equity_multiple: SimulationSummary;
   terminal_noi: SimulationSummary;
   net_sale_proceeds: SimulationSummary;
+  minimum_dscr?: SimulationSummary | null;
+  year_one_cash_on_cash?: SimulationSummary;
+  irr_histogram?: HistogramBin[];
+  probability_of_loss?: string;
+  probability_dscr_below_floor?: string | null;
+  probability_negative_cash_flow_year?: string;
+  base_case_irr?: string;
   correlations?: DriverCorrelation[];
   driver_impacts?: DriverImpact[];
   market_context?: MarketContext | null;
   downside_case?: RepresentativeCase;
   upside_case?: RepresentativeCase;
+};
+
+export type SimulationVariableRequest = {
+  key: SensitivityKey;
+  confidence_level: ConfidenceLevel;
+  confidence_percentage: string;
+  distribution: Distribution;
+  minimum?: string;
+  maximum?: string;
 };
 
 export type WaterfallYear = {
@@ -288,6 +371,7 @@ export type AssumptionSet = {
   property_type: string;
   value_bucket: string;
   underwriting: UnderwritingInputs;
+  supporting_detail?: SupportingDetail | null;
   created_at?: string;
 };
 

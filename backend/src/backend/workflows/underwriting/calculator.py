@@ -7,7 +7,7 @@ from backend.engines.operating import project_monthly_operations, project_operat
 from backend.engines.returns import ReturnAssumptions, calculate_returns
 from backend.engines.risk import calculate_risk_flags
 
-from .models import UnderwritingAssumptions, UnderwritingResult
+from .models import UnderwritingAssumptions, UnderwritingResult, UnleveredMetrics
 
 
 def calculate_underwriting(assumptions: UnderwritingAssumptions) -> UnderwritingResult:
@@ -73,20 +73,51 @@ def calculate_underwriting(assumptions: UnderwritingAssumptions) -> Underwriting
         going_in_cap_rate=going_in_cap_rate,
         annual_cash_flows=annual_cash_flows,
     )
+    unlevered = _unlevered_metrics(assumptions, operating_projection, disposition)
     return UnderwritingResult(
-        operating_projection,
-        monthly_operating_projection,
-        debt_projection,
-        terminal_noi,
-        going_in_cap_rate,
-        year_one_noi / assumptions.loan_amount if assumptions.loan_amount > ZERO else None,
-        disposition,
-        annual_operating_cash_flows,
-        annual_cash_flows,
-        returns,
-        risk_flags,
-        assumptions.purchase_price,
-        assumptions.loan_amount,
-        assumptions.closing_costs,
-        assumptions.initial_equity,
+        operating_projection=operating_projection,
+        monthly_operating_projection=monthly_operating_projection,
+        debt_projection=debt_projection,
+        terminal_noi=terminal_noi,
+        going_in_cap_rate=going_in_cap_rate,
+        debt_yield=year_one_noi / assumptions.loan_amount if assumptions.loan_amount > ZERO else None,
+        disposition=disposition,
+        annual_operating_cash_flows=annual_operating_cash_flows,
+        annual_cash_flows=annual_cash_flows,
+        returns=returns,
+        risk_flags=risk_flags,
+        purchase_price=assumptions.purchase_price,
+        loan_amount=assumptions.loan_amount,
+        closing_costs=assumptions.closing_costs,
+        initial_equity=assumptions.initial_equity,
+        unlevered=unlevered,
+        levered_profit=returns.total_equity_distributed - returns.total_equity_contributed,
+        annual_debt_yield=(
+            tuple(year.net_operating_income / assumptions.loan_amount for year in operating_projection)
+            if assumptions.loan_amount > ZERO
+            else None
+        ),
+    )
+
+
+def _unlevered_metrics(assumptions: UnderwritingAssumptions, operating_projection, disposition) -> UnleveredMetrics:
+    """Return property-level returns: NOI each year plus net sale proceeds before debt."""
+    total_cost = assumptions.purchase_price + assumptions.closing_costs
+    hold = assumptions.operating.hold_period_years
+    cash_flows = tuple(
+        year.net_operating_income + (disposition.net_sale_proceeds_before_debt if year.year == hold else ZERO)
+        for year in operating_projection
+    )
+    distributed = sum((flow for flow in cash_flows if flow > ZERO), ZERO)
+    contributed = total_cost + sum((-flow for flow in cash_flows if flow < ZERO), ZERO)
+    try:
+        irr = calculate_returns(ReturnAssumptions(initial_equity=total_cost, annual_cash_flows=cash_flows)).levered_irr
+    except ValueError:
+        irr = None
+    return UnleveredMetrics(
+        annual_cash_flows=cash_flows,
+        irr=irr,
+        multiple=distributed / contributed,
+        total_cost=total_cost,
+        profit=distributed - contributed,
     )

@@ -17,7 +17,34 @@ This README is a living project document. Update it as the application, technica
 
 ## Latest update
 
-This release turns the single-page form into a product: a **Deals** pipeline
+This release raises the analyst deliverables to institutional grade:
+
+- **Excel import template** (`GET /v1/imports/underwriting-workbook-template`):
+  a five-sheet workbook with flexible, alias-matched assumption labels, a rent
+  roll, other income, and operating-expense line items. Blank income or expense
+  inputs roll up from the detail sheets, percentages may be typed as 5, 5% or
+  0.05, and the detail is saved with the version.
+- **Analyst Excel workbook** (`POST /v1/exports/excel`): Summary (pricing
+  conclusion, returns, sources and uses, per-unit and per-SF metrics), Pro Forma
+  with live formula subtotals and IRR/multiple formulas, Monthly Cash Flow,
+  Debt (summary, annual and monthly amortization), Sale & Returns (attribution,
+  levered versus unlevered, payback), Sensitivity (IRR, multiple, DSCR and
+  maximum-price grids plus one-way price sensitivity), optional Risk Simulation,
+  Rent Roll & Expenses, Risk Flags, and Assumptions.
+- **Monte Carlo upgrade:** triangular, truncated-normal or uniform marginals
+  behind the Gaussian copula, P5 to P95 percentiles with standard deviation,
+  histogram bins, probability of loss, probability the minimum DSCR breaches
+  the floor, probability of a negative cash-flow year, a minimum-DSCR and Year 1
+  cash-on-cash distribution, tornado end points per driver, and the sampled
+  bands for the audit trail.
+- **Engine additions:** unlevered IRR, multiple and profit on total cost,
+  levered profit, and an annual debt-yield series.
+- **Workspace:** property detail (units, square feet, class, address, year
+  built) with editable rent roll, other income and expense lines, a live quick
+  read of the entered inputs, per-unit metrics on the Pricing tab, a histogram
+  and tornado on the Risk tab, and export options on the Reports tab.
+
+The previous release turned the single-page form into a product: a **Deals** pipeline
 page (latest version, solved price, returns, and flags per deal, with search,
 rename, and delete) and a tabbed **deal workspace** (Inputs, Pricing, Risk,
 Capital, Reports, History) built on one design system. The History tab adds a
@@ -224,12 +251,22 @@ To verify both local services without opening a browser:
 
 ## Spreadsheet interchange
 
-Download `GET /v1/imports/underwriting-template` to get the canonical
-one-row CSV format, then upload it to `POST /v1/imports/underwriting` for
-strict validation before creating an assumption version. The template uses
-decimal rates (`0.05` means 5%); optional annual rent-growth values are
-semicolon separated. Underwriting results can also be exported as an Excel
-cash-flow workbook or PDF investment memo from the workspace.
+Two import formats are supported from the Inputs tab:
+
+- **Excel workbook** (`GET /v1/imports/underwriting-workbook-template`, upload
+  to `POST /v1/imports/underwriting-workbook`): an Assumptions sheet of
+  labelled inputs (labels are matched through aliases, so "LTV" or
+  "Loan-to-value" both work and 5, 5% or 0.05 all mean five percent), plus
+  optional Rent Roll, Other Income and Operating Expenses sheets. Blank income
+  or expense inputs are rolled up from those sheets, and the detail is stored
+  with the saved version and reproduced in the Excel export.
+- **One-row CSV** (`GET /v1/imports/underwriting-template`, upload to
+  `POST /v1/imports/underwriting`): the canonical flat format with decimal
+  rates; optional annual rent-growth values are semicolon separated.
+
+Exports run at the solved maximum price: an analyst Excel workbook (with
+optional sensitivity grids and a risk-simulation sheet) and a PDF investment
+memo.
 
 ## Historical market-risk calibration
 

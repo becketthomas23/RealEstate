@@ -308,12 +308,14 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(workbook.content.startswith(b"PK"))
         exported_book = load_workbook(BytesIO(workbook.content), data_only=True)
         risk_sheet = exported_book["Risk Flags"]
-        self.assertEqual(risk_sheet[1][0].value, "Code")
-        self.assertEqual(risk_sheet[2][0].value, "thin_dscr")
+        self.assertEqual(risk_sheet[4][0].value, "Code")
+        self.assertEqual(risk_sheet[5][0].value, "thin_dscr")
         assumption_sheet = exported_book["Assumptions"]
-        self.assertEqual(assumption_sheet[1][0].value, "Underwriting assumptions")
-        self.assertEqual(assumption_sheet[2][0].value, "Purchase price")
-        self.assertEqual(assumption_sheet[2][1].value, "$1,000,000")
+        assumption_labels = {row[0].value: row[1].value for row in assumption_sheet.iter_rows(min_col=1, max_col=2) if row[0].value}
+        self.assertEqual(assumption_labels["Analysis purchase price"], 1000000.0)
+        self.assertEqual(assumption_labels["Hold period"], 5)
+        self.assertIn("Pro Forma", exported_book.sheetnames)
+        self.assertIn("Sensitivity", exported_book.sheetnames)
         self.assertEqual(memo.status_code, 200)
         self.assertEqual(memo.headers["content-type"], "application/pdf")
         self.assertTrue(memo.content.startswith(b"%PDF"))
@@ -608,10 +610,12 @@ class ConventionAndAnalysisPriceApiTests(unittest.TestCase):
 
         self.assertEqual(workbook.status_code, 200)
         summary = load_workbook(BytesIO(workbook.content), data_only=True)["Summary"]
-        labels = {row[0].value: row[1].value for row in summary.iter_rows(min_row=2)}
-        self.assertEqual(labels["Deal"], "Maple Apartments")
+        self.assertEqual(summary["A1"].value, "Maple Apartments")
+        self.assertIn("Version: IC base case", summary["A2"].value)
+        labels = {row[0].value: row[1].value for row in summary.iter_rows(min_row=3, max_col=2) if row[0].value}
         self.assertEqual(labels["Analysis basis"], "solved maximum supportable price")
-        self.assertEqual(str(labels["Analysis purchase price"]), "1083333.33")
+        self.assertEqual(labels["Analysis purchase price"], 1083333.33)
+        self.assertEqual(labels["Maximum supportable price"], 1083333.33)
         self.assertEqual(labels["Binding constraint"], "minimum dscr")
         self.assertEqual(memo.status_code, 200)
         self.assertTrue(memo.content.startswith(b"%PDF"))

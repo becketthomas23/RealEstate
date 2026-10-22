@@ -46,6 +46,9 @@ class AssumptionSetRecord(Base):
     property_type: Mapped[str] = mapped_column(String(100), nullable=False, default="Multifamily")
     value_bucket: Mapped[str] = mapped_column(String(100), nullable=False, default="Custom")
     inputs: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    # Optional property, rent-roll, other-income, and expense detail behind the
+    # aggregate inputs; it rides along with the version for exports and audit.
+    supporting_detail: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     deal: Mapped[DealRecord] = relationship(back_populates="assumption_sets")
     calculation_runs: Mapped[list[CalculationRunRecord]] = relationship(back_populates="assumption_set", cascade="all, delete-orphan")

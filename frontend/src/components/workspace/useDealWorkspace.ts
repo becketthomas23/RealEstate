@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, del, downloadFile, patch, post } from "@/lib/api";
 import { today, valueBucketFor } from "@/lib/format";
 import {
+  EMPTY_DETAIL,
   type AssumptionSet,
   type CalculationRun,
   type DealDetail,
   type DealForm,
+  type Distribution,
   type GridResult,
   type MarketCalibration,
   type PricingResult,
@@ -16,7 +18,10 @@ import {
   type SensitivityKey,
   type SensitivityResult,
   type SimulationResult,
+  type SimulationVariableRequest,
+  type SupportingDetail,
   type WaterfallResult,
+  type WorkbookImportResult,
   isPricingResult,
   isSensitivityResult,
   isSimulationResult,
@@ -27,6 +32,7 @@ import { DEFAULT_FORM, formFromInputs, toUnderwritingInputs, versionUnchanged, t
 export type SimulationOptions = {
   drivers: SensitivityKey[];
   confidence: "low" | "medium" | "high";
+  distribution: Distribution;
   iterations: number;
 };
 export type CalibrationOptions = {
@@ -41,6 +47,10 @@ export type WaterfallOptions = {
   sponsorShare: string;
   prefBeforeCapital: boolean;
 };
+export type ExportOptions = {
+  includeSimulation: boolean;
+  includeSensitivity: boolean;
+};
 
 const defaultMeta = (): VersionMeta => ({
   label: "Base case",
@@ -51,6 +61,73 @@ const defaultMeta = (): VersionMeta => ({
   value_bucket: valueBucketFor(DEFAULT_FORM.purchase_price),
 });
 
+export const hasDetail = (detail: SupportingDetail) =>
+  Boolean(
+    (detail.property && Object.values(detail.property).some((value) => value !== null && value !== "")) ||
+      detail.rent_roll.length ||
+      detail.other_income.length ||
+      detail.operating_expenses.length ||
+      detail.notes,
+  );
+
+/** Canonical form of the detail so numerically equal versions compare equal. */
+function normalizeDetail(detail: SupportingDetail | null | undefined) {
+  if (!detail || !hasDetail(detail)) return null;
+  const numeric = (value: string | number | null | undefined) => (value === null || value === undefined || value === "" ? null : String(Number(value)));
+  return {
+    property: detail.property
+      ? {
+          name: detail.property.name || null,
+          address: detail.property.address || null,
+          units: numeric(detail.property.units),
+          rentable_square_feet: numeric(detail.property.rentable_square_feet),
+          year_built: numeric(detail.property.year_built),
+          property_class: detail.property.property_class || null,
+        }
+      : null,
+    rent_roll: detail.rent_roll.map((line) => ({
+      unit_type: line.unit_type,
+      units: numeric(line.units),
+      average_square_feet: numeric(line.average_square_feet),
+      current_monthly_rent: numeric(line.current_monthly_rent),
+      market_monthly_rent: numeric(line.market_monthly_rent),
+    })),
+    other_income: detail.other_income.map((line) => ({ category: line.category, annual_amount: numeric(line.annual_amount), note: line.note || null })),
+    operating_expenses: detail.operating_expenses.map((line) => ({ category: line.category, annual_amount: numeric(line.annual_amount), note: line.note || null })),
+    notes: detail.notes || null,
+  };
+}
+
+/** Strip empty optional values so the API's strict schema accepts the detail. */
+function detailForApi(detail: SupportingDetail): SupportingDetail | null {
+  if (!hasDetail(detail)) return null;
+  const clean = (value: string | number | null | undefined) => (value === null || value === undefined || value === "" ? null : value);
+  return {
+    property: detail.property
+      ? {
+          name: (clean(detail.property.name) as string | null) ?? null,
+          address: (clean(detail.property.address) as string | null) ?? null,
+          units: detail.property.units ? Number(detail.property.units) : null,
+          rentable_square_feet: (clean(detail.property.rentable_square_feet) as string | null) ?? null,
+          year_built: detail.property.year_built ? Number(detail.property.year_built) : null,
+          property_class: (clean(detail.property.property_class) as string | null) ?? null,
+        }
+      : null,
+    rent_roll: detail.rent_roll
+      .filter((line) => line.unit_type.trim() && Number(line.units) > 0)
+      .map((line) => ({
+        unit_type: line.unit_type.trim(),
+        units: Number(line.units),
+        average_square_feet: (clean(line.average_square_feet) as string | null) ?? null,
+        current_monthly_rent: line.current_monthly_rent || "0",
+        market_monthly_rent: (clean(line.market_monthly_rent) as string | null) ?? null,
+      })),
+    other_income: detail.other_income.filter((line) => line.category.trim()).map((line) => ({ category: line.category.trim(), annual_amount: line.annual_amount || "0", note: (clean(line.note) as string | null) ?? null })),
+    operating_expenses: detail.operating_expenses.filter((line) => line.category.trim()).map((line) => ({ category: line.category.trim(), annual_amount: line.annual_amount || "0", note: (clean(line.note) as string | null) ?? null })),
+    notes: (clean(detail.notes) as string | null) ?? null,
+  };
+}
+
 /** All workspace state and actions for one deal. */
 export function useDealWorkspace(dealId: string | null) {
   const [deal, setDeal] = useState<DealDetail | null>(null);
@@ -60,15 +137,18 @@ export function useDealWorkspace(dealId: string | null) {
   const [runs, setRuns] = useState<CalculationRun[]>([]);
   const [form, setForm] = useState<DealForm>(DEFAULT_FORM);
   const [meta, setMeta] = useState<VersionMeta>(defaultMeta);
+  const [detail, setDetail] = useState<SupportingDetail>(EMPTY_DETAIL);
   const [result, setResult] = useState<PricingResult | null>(null);
   const [sensitivity, setSensitivity] = useState<SensitivityResult | null>(null);
   const [grid, setGrid] = useState<{ x: SensitivityKey; y: SensitivityKey; result: GridResult } | null>(null);
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [simulationPrice, setSimulationPrice] = useState<string | null>(null);
+  const [simulationOptions, setSimulationOptions] = useState<SimulationOptions | null>(null);
   const [waterfall, setWaterfall] = useState<WaterfallResult | null>(null);
   const [waterfallPrice, setWaterfallPrice] = useState<string | null>(null);
   const [calibration, setCalibration] = useState<MarketCalibration | null>(null);
   const [comparison, setComparison] = useState<ScenarioComparison | null>(null);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -83,6 +163,7 @@ export function useDealWorkspace(dealId: string | null) {
       property_type: saved.property_type,
       value_bucket: saved.value_bucket,
     });
+    setDetail(saved.supporting_detail ? { ...EMPTY_DETAIL, ...saved.supporting_detail } : EMPTY_DETAIL);
     setForm((current) => formFromInputs(saved.underwriting, current));
   }, []);
 
@@ -170,8 +251,25 @@ export function useDealWorkspace(dealId: string | null) {
       return null;
     }
   }, [form]);
-  const dirty = Boolean(activeSet && inputsOrNull && !versionUnchanged(activeSet, meta, inputsOrNull));
+  const detailDirty = Boolean(activeSet && JSON.stringify(normalizeDetail(activeSet.supporting_detail)) !== JSON.stringify(normalizeDetail(detail)));
+  const dirty = Boolean(activeSet && inputsOrNull && (!versionUnchanged(activeSet, meta, inputsOrNull) || detailDirty));
   const analysisPrice = result?.maximum_purchase_price ?? null;
+
+  const calibratedBounds = (key: SensitivityKey) => {
+    const historical = calibration?.driver_ranges.find((item) => item.key === key);
+    if (!historical) return {};
+    const base = Number(form[key]);
+    let minimum = base + Number(historical.percentile_10) - Number(historical.percentile_50);
+    let maximum = base + Number(historical.percentile_90) - Number(historical.percentile_50);
+    if (key === "exit_cap_rate") minimum = Math.max(minimum, 0.0001);
+    if (key === "vacancy_rate" || key === "annual_interest_rate") minimum = Math.max(minimum, 0);
+    maximum = Math.min(maximum, 0.9999);
+    return minimum < maximum ? { minimum: String(minimum), maximum: String(maximum) } : {};
+  };
+  const simulationVariables = (options: SimulationOptions): SimulationVariableRequest[] =>
+    options.drivers.map((key) => ({ key, confidence_level: options.confidence, confidence_percentage: "50", distribution: options.distribution, ...calibratedBounds(key) }));
+  const simulationCorrelations = (options: SimulationOptions) =>
+    calibration?.correlations.filter((item) => options.drivers.includes(item.first_key) && options.drivers.includes(item.second_key)) ?? [];
 
   const openSet = (saved: AssumptionSet) =>
     run("open", async () => {
@@ -183,7 +281,7 @@ export function useDealWorkspace(dealId: string | null) {
     run("solve", async () => {
       if (!deal) throw new Error("Open a deal before solving.");
       const underwriting = toUnderwritingInputs(form);
-      const unchanged = versionUnchanged(activeSet, meta, underwriting);
+      const unchanged = versionUnchanged(activeSet, meta, underwriting) && !detailDirty;
       const saved = unchanged
         ? (activeSet as AssumptionSet)
         : await post<AssumptionSet>("/v1/deals/" + deal.id + "/assumption-sets", {
@@ -194,6 +292,7 @@ export function useDealWorkspace(dealId: string | null) {
             property_type: meta.property_type,
             value_bucket: meta.value_bucket,
             underwriting,
+            supporting_detail: detailForApi(detail),
           });
       const calculation = await post<SavedRun<PricingResult>>("/v1/assumption-sets/" + saved.id + "/maximum-price", {
         target_levered_irr: form.target_levered_irr,
@@ -208,11 +307,7 @@ export function useDealWorkspace(dealId: string | null) {
       setWaterfall(null);
       setComparison(null);
       await loadHistory(saved.id, false);
-      setNotice(
-        unchanged
-          ? `Inputs unchanged; re-solved v${saved.version} and recorded the run.`
-          : `Saved v${saved.version} (${saved.label}) and solved the maximum price.`,
-      );
+      setNotice(unchanged ? `Inputs unchanged; re-solved v${saved.version} and recorded the run.` : `Saved v${saved.version} (${saved.label}) and solved the maximum price.`);
       return calculation.result;
     });
 
@@ -266,30 +361,19 @@ export function useDealWorkspace(dealId: string | null) {
     run("simulation", async () => {
       if (!activeSet) throw new Error("Save and solve a version first.");
       if (!options.drivers.length) throw new Error("Select at least one risk driver.");
-      const correlations =
-        calibration?.correlations.filter((item) => options.drivers.includes(item.first_key) && options.drivers.includes(item.second_key)) ?? [];
-      const calibratedBounds = (key: SensitivityKey) => {
-        const historical = calibration?.driver_ranges.find((item) => item.key === key);
-        if (!historical) return {};
-        const base = Number(form[key]);
-        let minimum = base + Number(historical.percentile_10) - Number(historical.percentile_50);
-        let maximum = base + Number(historical.percentile_90) - Number(historical.percentile_50);
-        if (key === "exit_cap_rate") minimum = Math.max(minimum, 0.0001);
-        if (key === "vacancy_rate" || key === "annual_interest_rate") minimum = Math.max(minimum, 0);
-        maximum = Math.min(maximum, 0.9999);
-        return minimum < maximum ? { minimum: String(minimum), maximum: String(maximum) } : {};
-      };
       const calculation = await post<SavedRun<SimulationResult>>("/v1/assumption-sets/" + activeSet.id + "/monte-carlo", {
-        variables: options.drivers.map((key) => ({ key, confidence_level: options.confidence, confidence_percentage: "50", ...calibratedBounds(key) })),
+        variables: simulationVariables(options),
         iterations: options.iterations,
         seed: 42,
         target_levered_irr: form.target_levered_irr,
-        correlations,
+        minimum_dscr: form.minimum_dscr,
+        correlations: simulationCorrelations(options),
         market_context: calibration?.context ?? null,
         purchase_price: analysisPrice,
       });
       setSimulation(calculation.result);
       setSimulationPrice(analysisPrice);
+      setSimulationOptions(options);
       await loadHistory(activeSet.id, false);
     });
 
@@ -307,10 +391,20 @@ export function useDealWorkspace(dealId: string | null) {
       await loadHistory(activeSet.id, false);
     });
 
-  const download = (kind: "excel" | "memo") =>
+  const download = (kind: "excel" | "memo", options: ExportOptions = { includeSimulation: false, includeSensitivity: true }) =>
     run("export-" + kind, async () => {
       const underwriting = activeSet ? { ...activeSet.underwriting } : toUnderwritingInputs(form);
       if (result) underwriting.purchase_price = result.maximum_purchase_price;
+      const simulationBlock =
+        kind === "excel" && options.includeSimulation && simulationOptions
+          ? {
+              variables: simulationVariables(simulationOptions),
+              iterations: simulationOptions.iterations,
+              seed: 42,
+              correlations: simulationCorrelations(simulationOptions),
+              market_context: calibration?.context ?? null,
+            }
+          : null;
       await downloadFile(
         `/v1/exports/${kind}`,
         {
@@ -329,8 +423,10 @@ export function useDealWorkspace(dealId: string | null) {
             recommended_bid_ceiling: result?.recommended_bid_ceiling ?? null,
             binding_constraint: result?.binding_constraint ?? null,
           },
+          supporting_detail: detailForApi(activeSet?.supporting_detail ? { ...EMPTY_DETAIL, ...activeSet.supporting_detail } : detail),
+          ...(kind === "excel" ? { simulation: simulationBlock, include_sensitivity: options.includeSensitivity } : {}),
         },
-        kind === "excel" ? slug(deal?.name) + "-cash-flow.xlsx" : slug(deal?.name) + "-investment-memo.pdf",
+        kind === "excel" ? slug(deal?.name) + "-underwriting-model.xlsx" : slug(deal?.name) + "-investment-memo.pdf",
       );
     });
 
@@ -345,13 +441,42 @@ export function useDealWorkspace(dealId: string | null) {
       );
     });
 
-  const importCsv = (file: File) =>
+  const importFile = (file: File) =>
     run("import", async () => {
       const data = new FormData();
       data.append("file", file);
-      const imported = await api<{ underwriting: AssumptionSet["underwriting"] }>("/v1/imports/underwriting", { method: "POST", body: data });
-      setForm((current) => formFromInputs(imported.underwriting, current));
-      setNotice(`Loaded assumptions from ${file.name}. Review them, then save and solve to create a version.`);
+      if (/\.xls[xm]$/i.test(file.name)) {
+        const imported = await api<WorkbookImportResult>("/v1/imports/underwriting-workbook", { method: "POST", body: data });
+        setForm((current) => ({
+          ...formFromInputs(imported.underwriting, current),
+          ...(imported.targets.target_levered_irr ? { target_levered_irr: imported.targets.target_levered_irr } : {}),
+          ...(imported.targets.minimum_dscr ? { minimum_dscr: imported.targets.minimum_dscr } : {}),
+        }));
+        setDetail({ ...EMPTY_DETAIL, ...imported.supporting_detail });
+        setMeta((current) => ({
+          ...current,
+          label: imported.version.label ?? current.label,
+          source: imported.version.source ?? current.source,
+          effective_date: imported.version.effective_date ?? current.effective_date,
+          confidence_level: imported.version.confidence_level ?? current.confidence_level,
+          property_type: imported.version.property_type ?? current.property_type,
+          value_bucket: valueBucketFor(imported.underwriting.purchase_price),
+        }));
+        setImportWarnings(imported.warnings);
+        const rolled = Object.entries(imported.sources)
+          .filter(([, source]) => source.startsWith("rolled up"))
+          .map(([key]) => key.replaceAll("_", " "));
+        setNotice(
+          `Loaded ${file.name}` +
+            (rolled.length ? ` (${rolled.join(" and ")} rolled up from the detail sheets)` : "") +
+            ". Review the inputs, then save and solve to create a version.",
+        );
+      } else {
+        const imported = await api<{ underwriting: AssumptionSet["underwriting"] }>("/v1/imports/underwriting", { method: "POST", body: data });
+        setForm((current) => formFromInputs(imported.underwriting, current));
+        setImportWarnings([]);
+        setNotice(`Loaded assumptions from ${file.name}. Review them, then save and solve to create a version.`);
+      }
     });
 
   const renameDeal = (name: string) =>
@@ -390,6 +515,8 @@ export function useDealWorkspace(dealId: string | null) {
     setForm,
     meta,
     setMeta,
+    detail,
+    setDetail,
     dirty,
     result,
     analysisPrice,
@@ -397,10 +524,13 @@ export function useDealWorkspace(dealId: string | null) {
     grid,
     simulation,
     simulationPrice,
+    simulationOptions,
     waterfall,
     waterfallPrice,
     calibration,
     comparison,
+    importWarnings,
+    setImportWarnings,
     busy,
     error,
     setError,
@@ -415,7 +545,7 @@ export function useDealWorkspace(dealId: string | null) {
     runWaterfall,
     download,
     compareVersions,
-    importCsv,
+    importFile,
     renameDeal,
     deleteDeal,
     showRun,

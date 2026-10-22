@@ -51,6 +51,17 @@ class UnderwritingAssumptions:
 
 
 @dataclass(frozen=True, slots=True)
+class UnleveredMetrics:
+    """Property-level returns before financing, on total cost (price plus closing costs)."""
+
+    annual_cash_flows: tuple[Decimal, ...]
+    irr: Decimal | None
+    multiple: Decimal
+    total_cost: Decimal
+    profit: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class UnderwritingResult:
     operating_projection: tuple[OperatingYear, ...]
     monthly_operating_projection: tuple[OperatingMonth, ...]
@@ -69,3 +80,8 @@ class UnderwritingResult:
     loan_amount: Decimal
     closing_costs: Decimal
     initial_equity: Decimal
+    unlevered: UnleveredMetrics
+    # Levered profit: every distribution less every contribution.
+    levered_profit: Decimal
+    # Annual debt yield on the original loan amount (None for all-cash).
+    annual_debt_yield: tuple[Decimal, ...] | None

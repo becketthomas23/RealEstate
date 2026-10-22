@@ -30,7 +30,9 @@ from backend.workflows.monte_carlo.calibration import calculate_market_calibrati
 from backend.engines.waterfall import WaterfallAssumptions, calculate_waterfall
 from backend.engines.construction import ConstructionLoanAssumptions, project_construction_loan
 from backend.workflows.development import DevelopmentAssumptions, calculate_development
-from backend.reports import excel_cash_flow, investment_memo
+from backend.reports import investment_memo
+from backend.exports.workbook import build_underwriting_workbook
+from backend.workbook_import import parse_underwriting_workbook, underwriting_workbook_template
 from backend.imports import parse_underwriting_csv, underwriting_csv_template
 from backend.persistence import Database, Repository
 from backend.persistence.models import AssumptionSetRecord, CalculationRunRecord, DealRecord
@@ -319,12 +321,60 @@ async def import_underwriting(file: UploadFile = File(...)) -> dict[str, Any]:
     return {"underwriting": _serialize(request.model_dump())}
 
 
+@app.get("/v1/imports/underwriting-workbook-template", tags=["imports"])
+def underwriting_workbook_template_download() -> StreamingResponse:
+    """Download the multi-sheet Excel import template with an example deal."""
+    return StreamingResponse(
+        underwriting_workbook_template(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=underwriting-import-template.xlsx"},
+    )
+
+
+@app.post("/v1/imports/underwriting-workbook", tags=["imports"])
+async def import_underwriting_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Parse an assumptions workbook (with optional rent roll, income, and expenses)."""
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="upload an .xlsx underwriting workbook")
+    try:
+        imported = parse_underwriting_workbook(await file.read())
+        _to_underwriting_assumptions(imported.underwriting)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(
+        {
+            "underwriting": imported.underwriting.model_dump(),
+            "supporting_detail": imported.supporting_detail.model_dump(),
+            "version": imported.version,
+            "targets": imported.targets,
+            "warnings": imported.warnings,
+            "sources": imported.sources,
+        }
+    )
+
+
 @app.post("/v1/exports/excel", tags=["exports"])
 def export_excel(request: ExportRequest):
-    """Export the case at the request's purchase price with any reporting context."""
+    """Export the full analyst workbook for the case at the request's purchase price."""
     assumptions, result, report = _export_inputs(request)
+    try:
+        simulation = (
+            calculate_monte_carlo(_to_monte_carlo_assumptions(_ExportSimulation(request, report), assumptions))
+            if request.simulation is not None
+            else None
+        )
+        workbook = build_underwriting_workbook(
+            result,
+            assumptions,
+            report=report,
+            detail=request.supporting_detail.model_dump() if request.supporting_detail is not None else None,
+            simulation=simulation,
+            include_sensitivity=request.include_sensitivity,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     return StreamingResponse(
-        excel_cash_flow(result, assumptions, report),
+        workbook,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=underwriting-cash-flow.xlsx"},
     )
@@ -335,15 +385,31 @@ def export_memo(request: ExportRequest):
     """Export an investment memo for the case at the request's purchase price."""
     assumptions, result, report = _export_inputs(request)
     return StreamingResponse(
-        investment_memo(result, assumptions, report),
+        investment_memo(result, assumptions, report, request.supporting_detail.model_dump() if request.supporting_detail is not None else None),
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=investment-memo.pdf"},
     )
 
 
+class _ExportSimulation:
+    """Adapt an export request to the shape the Monte Carlo converter expects."""
+
+    def __init__(self, request: ExportRequest, report: dict[str, Any] | None) -> None:
+        simulation = request.simulation
+        self.variables = simulation.variables
+        self.iterations = simulation.iterations
+        self.seed = simulation.seed
+        self.correlations = simulation.correlations
+        self.market_context = simulation.market_context
+        self.target_levered_irr = (report or {}).get("target_levered_irr")
+        self.minimum_dscr = (report or {}).get("minimum_dscr")
+
+
 def _export_inputs(request: ExportRequest):
     try:
-        assumptions = _to_underwriting_assumptions(UnderwritingRequest.model_validate(request.model_dump(exclude={"report"})))
+        assumptions = _to_underwriting_assumptions(
+            UnderwritingRequest.model_validate(request.model_dump(exclude={"report", "supporting_detail", "simulation", "include_sensitivity"}))
+        )
         result = calculate_underwriting(assumptions)
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
@@ -467,6 +533,7 @@ def create_assumption_set(
         property_type=request.property_type,
         value_bucket=request.value_bucket,
         inputs=_serialize(request.underwriting.model_dump()),
+        supporting_detail=_serialize(request.supporting_detail.model_dump()) if request.supporting_detail is not None else None,
     )
     return _serialize_assumption_set(assumptions)
 
@@ -647,12 +714,15 @@ def _to_monte_carlo_assumptions(request: Any, underwriting: UnderwritingAssumpti
                 confidence_percentage=item.confidence_percentage,
                 minimum=item.minimum,
                 maximum=item.maximum,
+                distribution=item.distribution,
+                mode=item.mode,
             )
             for item in request.variables
         ),
         iterations=request.iterations,
         seed=request.seed,
-        target_levered_irr=request.target_levered_irr,
+        target_levered_irr=getattr(request, "target_levered_irr", None),
+        minimum_dscr=getattr(request, "minimum_dscr", None),
         correlations=tuple(
             Correlation(item.first_key, item.second_key, item.coefficient)
             for item in request.correlations
@@ -779,6 +849,7 @@ def _serialize_assumption_set(assumptions: AssumptionSetRecord) -> dict[str, Any
             "property_type": assumptions.property_type,
             "value_bucket": assumptions.value_bucket,
             "underwriting": assumptions.inputs,
+            "supporting_detail": assumptions.supporting_detail,
             "created_at": assumptions.created_at,
         }
     )

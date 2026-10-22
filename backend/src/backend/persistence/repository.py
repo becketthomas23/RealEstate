@@ -88,6 +88,7 @@ class Repository:
         property_type: str,
         value_bucket: str,
         inputs: dict[str, Any],
+        supporting_detail: dict[str, Any] | None = None,
     ) -> AssumptionSetRecord:
         latest_version = self.session.scalar(
             select(func.max(AssumptionSetRecord.version)).where(AssumptionSetRecord.deal_id == deal.id)
@@ -102,6 +103,7 @@ class Repository:
             property_type=property_type,
             value_bucket=value_bucket,
             inputs=inputs,
+            supporting_detail=supporting_detail,
         )
         deal.updated_at = datetime.now(timezone.utc)
         self.session.add(assumptions)

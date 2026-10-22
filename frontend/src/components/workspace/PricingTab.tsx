@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { constraintLabel, money, multiple, percent, percent2 } from "@/lib/format";
+import { constraintLabel, money, multiple, percent, percent2, signedPercent } from "@/lib/format";
 import { SENSITIVITY_LABELS, type SensitivityKey } from "@/lib/types";
 import { CashFlowChart } from "../charts";
 import { Badge, Button, Card, EmptyState, KeyValue, SectionHeading, Select, Stat, severityTone } from "../ui";
@@ -10,7 +10,7 @@ import type { Workspace } from "./useDealWorkspace";
 const DRIVERS = Object.keys(SENSITIVITY_LABELS) as SensitivityKey[];
 
 export function PricingTab({ workspace, onGoToInputs }: { workspace: Workspace; onGoToInputs: () => void }) {
-  const { result, form, sensitivity, grid, busy, runSensitivity, runGrid, activeSet } = workspace;
+  const { result, form, sensitivity, grid, busy, runSensitivity, runGrid, activeSet, detail } = workspace;
   const [gridX, setGridX] = useState<SensitivityKey>("rent_growth_rate");
   const [gridY, setGridY] = useState<SensitivityKey>("exit_cap_rate");
 
@@ -31,6 +31,23 @@ export function PricingTab({ workspace, onGoToInputs }: { workspace: Workspace; 
   const target = Number(form.target_levered_irr);
   const loanAmount = uw.loan_amount ?? String(Number(result.maximum_purchase_price) * Number(form.loan_to_value));
   const equity = uw.initial_equity ?? String(Number(result.maximum_purchase_price) * (1 + Number(form.closing_cost_rate)) - Number(loanAmount));
+  const property = activeSet?.supporting_detail?.property ?? detail.property;
+  const units = property?.units ? Number(property.units) : null;
+  const squareFeet = property?.rentable_square_feet ? Number(property.rentable_square_feet) : null;
+  const price = Number(result.maximum_purchase_price);
+  const yearOne = uw.operating_projection[0];
+  const perUnit: Array<[string, string]> = [];
+  if (units) {
+    perUnit.push(["Price per unit", money(price / units)], ["Year 1 NOI per unit", money(Number(yearOne.net_operating_income) / units)], ["Year 1 OpEx per unit", money(Number(yearOne.operating_expenses) / units)], ["Gross income per unit per month", money(Number(yearOne.potential_gross_income) / units / 12)]);
+  }
+  if (squareFeet) {
+    perUnit.push(["Price per SF", "$" + (price / squareFeet).toFixed(2)], ["Year 1 NOI per SF", "$" + (Number(yearOne.net_operating_income) / squareFeet).toFixed(2)], ["Year 1 OpEx per SF", "$" + (Number(yearOne.operating_expenses) / squareFeet).toFixed(2)]);
+  }
+  perUnit.push(
+    ["Expense ratio (OpEx / EGI)", percent(Number(yearOne.operating_expenses) / Number(yearOne.effective_gross_income))],
+    ["NOI margin", percent(Number(yearOne.net_operating_income) / Number(yearOne.effective_gross_income))],
+    ["Break-even occupancy", percent((Number(yearOne.operating_expenses) + Number(uw.debt_projection[0].debt_service)) / Number(yearOne.potential_gross_income))],
+  );
 
   return (
     <div className="space-y-6">
@@ -54,11 +71,15 @@ export function PricingTab({ workspace, onGoToInputs }: { workspace: Workspace; 
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3">
             <Stat onPanel tone="accent" label="Levered IRR" value={percent(uw.returns.levered_irr)} hint={"target " + percent(target)} />
-            <Stat onPanel label="Equity multiple" value={multiple(uw.returns.equity_multiple)} />
+            <Stat onPanel label="Unlevered IRR" value={uw.unlevered?.irr ? percent(uw.unlevered.irr) : "—"} hint={uw.unlevered ? "leverage adds " + signedPercent(Number(uw.returns.levered_irr) - Number(uw.unlevered.irr ?? uw.returns.levered_irr)) : undefined} />
+            <Stat onPanel label="Equity multiple" value={multiple(uw.returns.equity_multiple)} hint={uw.levered_profit ? "profit " + money(uw.levered_profit) : undefined} />
             <Stat onPanel label="Min DSCR" value={uw.returns.minimum_dscr === null ? "N/A" : multiple(uw.returns.minimum_dscr)} hint={uw.returns.minimum_dscr === null ? "all-cash" : "floor " + multiple(form.minimum_dscr)} />
-            <Stat onPanel label="Going-in cap" value={percent2(uw.going_in_cap_rate)} hint="Year 1 NOI / price" />
-            <Stat onPanel label="Debt yield" value={uw.debt_yield === null ? "N/A" : percent2(uw.debt_yield)} />
-            <Stat onPanel label="Equity required" value={money(equity)} hint={"loan " + money(loanAmount)} />
+            <Stat onPanel label="Going-in cap" value={percent2(uw.going_in_cap_rate)} hint={"exit " + percent2(form.exit_cap_rate)} />
+            <Stat onPanel label="Debt yield" value={uw.debt_yield === null ? "N/A" : percent2(uw.debt_yield)} hint={"loan " + money(loanAmount)} />
+            <Stat onPanel label="Equity required" value={money(equity)} hint={uw.closing_costs ? "incl. " + money(uw.closing_costs) + " closing" : undefined} />
+            {units && <Stat onPanel label="Price per unit" value={money(price / units)} hint={units.toLocaleString() + " units"} />}
+            {!units && squareFeet && <Stat onPanel label="Price per SF" value={"$" + (price / squareFeet).toFixed(2)} hint={squareFeet.toLocaleString() + " SF"} />}
+            {!units && !squareFeet && <Stat onPanel label="Expense ratio" value={percent(Number(yearOne.operating_expenses) / Number(yearOne.effective_gross_income))} hint="OpEx / EGI, Year 1" />}
           </div>
         </div>
       </Card>
@@ -122,6 +143,9 @@ export function PricingTab({ workspace, onGoToInputs }: { workspace: Workspace; 
                 ))}
               </ul>
             )}
+          </Card>
+          <Card title="Deal metrics" description={units || squareFeet ? "Per-unit and per-square-foot figures from the property detail." : "Add units or square feet on the Inputs tab for per-unit metrics."}>
+            <KeyValue rows={perUnit} />
           </Card>
           <Card title="Exit and sources">
             <KeyValue

@@ -7,18 +7,24 @@ workflow. It has two screens:
   solved maximum price, IRR, DSCR, multiple, and risk-flag count. Deals can be
   created, searched, sorted, renamed, and deleted (with confirmation).
 - **Deal workspace** (`/deals/?id=…`): a tabbed workspace for one deal.
-  - **Inputs** - version details, acquisition and exit, operations (including
+  - **Inputs** - version details, property facts with an editable rent roll,
+    other income and expense lines, acquisition and exit, operations (including
     the Year 1 convention and an optional rent-growth schedule), financing, and
-    the investment targets. Saving creates an immutable version; re-solving
-    unchanged inputs reuses the active version. A one-row CSV can be imported.
+    the investment targets, plus a live quick read of the entered deal. Saving
+    creates an immutable version; re-solving unchanged inputs reuses the
+    active version. The Excel template or the one-row CSV can be imported.
   - **Pricing** - the solved maximum price, bid range, binding constraint, key
     metrics, risk flags, an equity cash-flow chart and table, one-way price
     sensitivities, and a two-way IRR grid at the solved price.
-  - **Risk** - seeded Monte Carlo at the solved price with optional market
-    calibration from an aggregate history CSV.
+  - **Risk** - seeded, correlated Monte Carlo at the solved price with a
+    choice of marginal distribution, an IRR histogram, P5 to P95 statistics,
+    loss and DSCR-breach probabilities, a driver tornado, representative
+    cases, sampled bands, and optional market calibration from an aggregate
+    history CSV.
   - **Capital** - the LP/sponsor waterfall at the solved price with a
     selectable tier order and a year-by-year allocation.
-  - **Reports** - Excel workbook and PDF memo exports for the solved case.
+  - **Reports** - the analyst Excel workbook (with optional sensitivity grids
+    and risk-simulation sheet) and the PDF memo, both for the solved case.
   - **History** - every version, every saved run (with the price it
     describes), and a like-for-like comparison across versions.
 
