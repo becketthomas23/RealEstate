@@ -49,7 +49,13 @@ def market_calibration_csv_template() -> str:
     return output.getvalue()
 
 
-def calculate_market_calibration(contents: bytes, property_type: str, value_bucket: str, source: str) -> MarketCalibration:
+def calculate_market_calibration(
+    contents: bytes,
+    property_type: str,
+    value_bucket: str,
+    source: str,
+    source_as_of_date: str,
+) -> MarketCalibration:
     """Calculate Pearson correlations for a single aggregate market segment.
 
     The CSV deliberately contains only periodic aggregate metrics.  It does not
@@ -101,6 +107,7 @@ def calculate_market_calibration(contents: bytes, property_type: str, value_buck
             property_type=property_type,
             value_bucket=value_bucket,
             source=source.strip() or "Historical market CSV",
+            source_as_of_date=source_as_of_date,
             observations=len(selected),
             period_start=min(periods),
             period_end=max(periods),

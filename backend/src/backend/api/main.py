@@ -232,13 +232,16 @@ async def preview_market_calibration(
     property_type: str = Form(...),
     value_bucket: str = Form(...),
     source: str = Form("Historical market CSV"),
+    source_as_of_date: date = Form(...),
 ) -> dict[str, Any]:
     """Calculate correlations from a user-supplied aggregate market time series.
 
     The data is only used to produce this preview response; it is not persisted.
     """
     try:
-        calibration = calculate_market_calibration(await file.read(), property_type, value_bucket, source)
+        calibration = calculate_market_calibration(
+            await file.read(), property_type, value_bucket, source, source_as_of_date.isoformat()
+        )
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     return _serialize(calibration)
@@ -619,6 +622,7 @@ def _to_monte_carlo_assumptions(request: Any, underwriting: UnderwritingAssumpti
                 property_type=context.property_type,
                 value_bucket=context.value_bucket,
                 source=context.source,
+                source_as_of_date=context.source_as_of_date.isoformat(),
                 observations=context.observations,
                 period_start=context.period_start,
                 period_end=context.period_end,

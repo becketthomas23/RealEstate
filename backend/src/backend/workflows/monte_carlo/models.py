@@ -45,6 +45,7 @@ class MarketContext:
     property_type: str
     value_bucket: str
     source: str
+    source_as_of_date: str
     observations: int
     period_start: str
     period_end: str

@@ -109,9 +109,12 @@ class MonteCarloTests(unittest.TestCase):
             + "\n".join(rows)
         ).encode()
 
-        calibration = calculate_market_calibration(csv, "Multifamily", "$10M-$25M", "Educational CoStar export")
+        calibration = calculate_market_calibration(
+            csv, "Multifamily", "$10M-$25M", "Synthetic test market history", "2026-10-21"
+        )
 
         self.assertEqual(calibration.context.observations, 8)
+        self.assertEqual(calibration.context.source_as_of_date, "2026-10-21")
         self.assertEqual(len(calibration.correlations), 10)
         self.assertEqual(len(calibration.driver_ranges), 5)
         self.assertLessEqual(calibration.driver_ranges[0].percentile_10, calibration.driver_ranges[0].percentile_50)

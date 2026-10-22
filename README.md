@@ -199,7 +199,11 @@ P10/P90 deviation from the segment median is applied around the deal's current
 assumption; this preserves the deal-specific base case while using the
 historical segment to size the uncertainty band. A
 subsequent saved return-risk run retains only the resulting coefficients and
-their provenance (source label, segment, time range, and observation count).
+their provenance (source label, source as-of or pull date, segment, time range,
+and observation count). The application does not connect to CoStar or any
+public-data API in this release: any market history is supplied by the analyst,
+and its source label and date are user declarations that should be verified
+against the original document or licensed export.
 
 The UI suggests a value bucket from the deal's purchase price. This is a
 starting classification, not an appraisal: select the bucket that matches the
@@ -211,6 +215,20 @@ simulation also reports the sampled association with IRR and cumulative
 operating cash flow, plus the controlled one-input-at-a-time change in each per
 a 100-basis-point input move. Those effects are deal-specific and explanatory,
 not independent causal estimates.
+
+## Data provenance and illustrative defaults
+
+The calculation engine uses the deal assumptions entered by the analyst or
+imported through the one-row underwriting CSV. Saved assumption versions record
+the source or document reference, effective date, and confidence level. The
+market-calibration upload additionally records a source as-of or pull date; the
+raw market file is used only for the preview and is not retained.
+
+There are no embedded licensed market data, property comps, CoStar exports, or
+public API calls in the current build. The values shown when the app first opens,
+the downloadable CSV templates, and test fixtures are illustrative synthetic
+examples only. They are not market observations and should be replaced before
+using the model for any decision.
 
 ## Production deployment
 

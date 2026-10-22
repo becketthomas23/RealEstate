@@ -190,7 +190,8 @@ class ApiTests(unittest.TestCase):
             data={
                 "property_type": "Multifamily",
                 "value_bucket": "$10M-$25M",
-                "source": "Educational market export",
+                "source": "Synthetic test market history",
+                "source_as_of_date": "2026-10-21",
             },
             files={"file": ("market-history.csv", contents, "text/csv")},
         )
@@ -198,7 +199,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["context"]["observations"], 8)
-        self.assertEqual(body["context"]["source"], "Educational market export")
+        self.assertEqual(body["context"]["source"], "Synthetic test market history")
+        self.assertEqual(body["context"]["source_as_of_date"], "2026-10-21")
         self.assertEqual(len(body["correlations"]), 10)
         self.assertEqual(len(body["driver_ranges"]), 5)
         self.assertTrue(body["warnings"])

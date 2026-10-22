@@ -134,6 +134,7 @@ class MarketContextRequest(ApiModel):
     property_type: str = Field(min_length=1, max_length=100)
     value_bucket: str = Field(min_length=1, max_length=100)
     source: str = Field(min_length=1, max_length=500)
+    source_as_of_date: date
     observations: int = Field(ge=8)
     period_start: str = Field(min_length=1, max_length=50)
     period_end: str = Field(min_length=1, max_length=50)
