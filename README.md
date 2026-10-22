@@ -17,8 +17,17 @@ This README is a living project document. Update it as the application, technica
 
 ## Latest update
 
-This release fixes the consistency problems found in an engine and output
-audit, so every panel describes the same deal:
+This release turns the single-page form into a product: a **Deals** pipeline
+page (latest version, solved price, returns, and flags per deal, with search,
+rename, and delete) and a tabbed **deal workspace** (Inputs, Pricing, Risk,
+Capital, Reports, History) built on one design system. The History tab adds a
+like-for-like comparison across saved versions, Inputs accepts the one-row CSV
+import, and the Pricing and Risk tabs gain an equity cash-flow chart and a
+P10/P90 return band. The API gained deal summaries plus rename and delete.
+See `frontend/README.md` for the screen and file layout.
+
+The previous release fixed the consistency problems found in an engine and
+output audit, so every panel describes the same deal:
 
 - **One analysis price:** the risk simulation, LP waterfall, and Excel/PDF
   exports now run at the solved maximum supportable price (recorded with each

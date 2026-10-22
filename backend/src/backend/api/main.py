@@ -47,6 +47,7 @@ from .access import (
 
 from .schemas import (
     AssumptionSetCreateRequest,
+    DealRenameRequest,
     AdvancedSensitivityRequest,
     DealCreateRequest,
     LoginRequest,
@@ -88,7 +89,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -358,7 +359,22 @@ def create_deal(request: DealCreateRequest, session: Session = Depends(get_sessi
 
 @app.get("/v1/deals", tags=["deals"])
 def list_deals(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    return [_serialize_deal(deal) for deal in Repository(session).list_deals()]
+    """List deals newest-first with their latest version and latest solved price."""
+    return [_serialize_deal_summary(summary) for summary in Repository(session).list_deal_summaries()]
+
+
+@app.patch("/v1/deals/{deal_id}", tags=["deals"])
+def rename_deal(deal_id: str, request: DealRenameRequest, session: Session = Depends(get_session)) -> dict[str, Any]:
+    repository = Repository(session)
+    return _serialize_deal(repository.rename_deal(_require_deal(repository, deal_id), request.name))
+
+
+@app.delete("/v1/deals/{deal_id}", tags=["deals"], status_code=status.HTTP_204_NO_CONTENT)
+def delete_deal(deal_id: str, session: Session = Depends(get_session)) -> Response:
+    """Delete a deal together with its versions, runs, and result snapshots."""
+    repository = Repository(session)
+    repository.delete_deal(_require_deal(repository, deal_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/v1/deals/{deal_id}", tags=["deals"])
@@ -708,6 +724,46 @@ def _require_assumption_set(repository: Repository, assumption_set_id: str) -> A
 
 def _serialize_deal(deal: DealRecord) -> dict[str, Any]:
     return _serialize({"id": deal.id, "name": deal.name, "created_at": deal.created_at, "updated_at": deal.updated_at})
+
+
+def _serialize_deal_summary(summary) -> dict[str, Any]:
+    latest = summary.latest_version
+    run = summary.latest_pricing_run
+    payload = run.result.payload if run is not None and run.result is not None else None
+    returns = payload["underwriting"]["returns"] if payload else {}
+    return {
+        **_serialize_deal(summary.deal),
+        "version_count": summary.version_count,
+        "latest_version": (
+            {
+                "id": latest.id,
+                "version": latest.version,
+                "label": latest.label,
+                "confidence_level": latest.confidence_level,
+                "property_type": latest.property_type,
+                "value_bucket": latest.value_bucket,
+                "effective_date": latest.effective_date.isoformat(),
+                "purchase_price": latest.inputs.get("purchase_price"),
+            }
+            if latest is not None
+            else None
+        ),
+        "latest_pricing": (
+            {
+                "run_id": run.id,
+                "created_at": run.created_at.isoformat(),
+                "maximum_purchase_price": payload.get("maximum_purchase_price"),
+                "levered_irr": returns.get("levered_irr"),
+                "minimum_dscr": returns.get("minimum_dscr"),
+                "equity_multiple": returns.get("equity_multiple"),
+                "target_levered_irr": (run.request or {}).get("target_levered_irr"),
+                "binding_constraint": payload.get("binding_constraint"),
+                "risk_flag_count": len(payload["underwriting"].get("risk_flags", [])),
+            }
+            if payload
+            else None
+        ),
+    }
 
 
 def _serialize_assumption_set(assumptions: AssumptionSetRecord) -> dict[str, Any]:

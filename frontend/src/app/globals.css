@@ -1,24 +1,138 @@
 @import "tailwindcss";
 
-:root {
-  --background: #f6f7f4;
-  --foreground: #16201b;
+/*
+  Design tokens. Everything in the app draws from these so the deal list, the
+  workspace, the login screen, and the exports (which use the same green)
+  read as one product. Tailwind v4 exposes each --color-* token as a utility
+  (bg-surface, text-ink, border-line, ...).
+*/
+@theme {
+  --font-sans: "Inter", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-canvas: #f4f5f1;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8f9f6;
+  --color-ink: #16201b;
+  --color-ink-secondary: #4b554f;
+  --color-ink-muted: #7a847e;
+  --color-line: #e3e6e0;
+  --color-line-strong: #c9cec6;
+
+  --color-primary: #166534;
+  --color-primary-strong: #14532d;
+  --color-primary-soft: #e6f2ea;
+  --color-primary-ink: #0f3d21;
+  --color-on-primary: #ffffff;
+
+  --color-panel: #16201b;
+  --color-panel-soft: #223029;
+  --color-panel-line: #2f3f36;
+  --color-panel-ink: #f1f4f0;
+  --color-panel-muted: #9fa9a2;
+  --color-panel-accent: #86efac;
+
+  --color-series-1: #166534;
+  --color-series-2: #2563eb;
+
+  --color-good: #15803d;
+  --color-good-soft: #e8f5ec;
+  --color-warn: #b45309;
+  --color-warn-soft: #fff4e5;
+  --color-critical: #b91c1c;
+  --color-critical-soft: #fdecec;
+  --color-info: #1d4ed8;
+  --color-info-soft: #e8efff;
+
+  --radius-card: 1rem;
+  --radius-control: 0.625rem;
+  --shadow-card: 0 1px 2px rgba(22, 32, 27, 0.04), 0 1px 1px rgba(22, 32, 27, 0.03);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: Arial, Helvetica, sans-serif;
+* {
+  box-sizing: border-box;
 }
 
-* { box-sizing: border-box; }
+html {
+  height: 100%;
+}
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100%;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
 }
 
-button, input, select {
+button,
+input,
+select,
+textarea {
   font: inherit;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tables in the workspace share one rhythm. */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+}
+.data-table th {
+  padding: 0.5rem 0.75rem;
+  font-weight: 500;
+  text-align: right;
+  color: var(--color-ink-muted);
+  background: var(--color-surface-muted);
+  white-space: nowrap;
+}
+.data-table th:first-child,
+.data-table td:first-child {
+  text-align: left;
+}
+.data-table td {
+  padding: 0.625rem 0.75rem;
+  text-align: right;
+  border-top: 1px solid var(--color-line);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.data-table tbody tr:hover td {
+  background: var(--color-surface-muted);
+}
+.data-table.on-panel th {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-panel-muted);
+}
+.data-table.on-panel td {
+  border-top-color: var(--color-panel-line);
+}
+.data-table.on-panel tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Reduced-motion friendly fade for freshly loaded panels. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise {
+    animation: none;
+  }
 }

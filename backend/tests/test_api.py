@@ -631,3 +631,66 @@ class ConventionAndAnalysisPriceApiTests(unittest.TestCase):
         # Going-in cap is Year 1 NOI / price under either convention.
         self.assertEqual(current_body["going_in_cap_rate"], "0.13")
         self.assertAlmostEqual(float(grown_body["going_in_cap_rate"]), (220000 * 0.9 - 50000) / 1000000, places=12)
+
+
+class DealPipelineApiTests(unittest.TestCase):
+    """Deal list summaries, renaming, and deletion for the pipeline view."""
+
+    def setUp(self) -> None:
+        self.temp_directory = TemporaryDirectory()
+        self.original_database = api_main.database
+        database_path = Path(self.temp_directory.name) / "underwriting.db"
+        api_main.database = Database(f"sqlite:///{database_path.as_posix()}")
+        self.client_context = TestClient(api_main.app)
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        api_main.database.dispose()
+        api_main.database = self.original_database
+        self.temp_directory.cleanup()
+
+    def test_deal_list_summarises_latest_version_and_solve(self) -> None:
+        empty = self.client.post("/v1/deals", json={"name": "Empty deal"}).json()
+        deal = self.client.post("/v1/deals", json={"name": "Maple Apartments"}).json()
+        version = self.client.post(
+            f"/v1/deals/{deal['id']}/assumption-sets",
+            json={"label": "Broker OM", "property_type": "Multifamily", "underwriting": UNDERWRITING_REQUEST},
+        ).json()
+        solved = self.client.post(
+            f"/v1/assumption-sets/{version['id']}/maximum-price",
+            json={"target_levered_irr": "0.10", "minimum_dscr": "1.00"},
+        ).json()
+
+        listing = self.client.get("/v1/deals")
+
+        self.assertEqual(listing.status_code, 200)
+        rows = {row["id"]: row for row in listing.json()}
+        self.assertEqual(rows[empty["id"]]["version_count"], 0)
+        self.assertIsNone(rows[empty["id"]]["latest_version"])
+        self.assertIsNone(rows[empty["id"]]["latest_pricing"])
+        maple = rows[deal["id"]]
+        self.assertEqual(maple["version_count"], 1)
+        self.assertEqual(maple["latest_version"]["label"], "Broker OM")
+        self.assertEqual(maple["latest_pricing"]["maximum_purchase_price"], solved["result"]["maximum_purchase_price"])
+        self.assertEqual(maple["latest_pricing"]["target_levered_irr"], "0.10")
+        self.assertEqual(maple["latest_pricing"]["binding_constraint"], "minimum_dscr")
+        self.assertEqual(maple["latest_pricing"]["risk_flag_count"], 2)
+        # The solved deal was touched most recently, so it lists first.
+        self.assertEqual(listing.json()[0]["id"], deal["id"])
+
+    def test_deals_can_be_renamed_and_deleted_with_their_history(self) -> None:
+        deal = self.client.post("/v1/deals", json={"name": "Temp"}).json()
+        version = self.client.post(f"/v1/deals/{deal['id']}/assumption-sets", json={"underwriting": UNDERWRITING_REQUEST}).json()
+        self.client.post(f"/v1/assumption-sets/{version['id']}/underwriting")
+
+        renamed = self.client.patch(f"/v1/deals/{deal['id']}", json={"name": "  Oak Plaza  "})
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.json()["name"], "Oak Plaza")
+        self.assertEqual(self.client.patch(f"/v1/deals/{deal['id']}", json={"name": "   "}).status_code, 422)
+
+        deleted = self.client.delete(f"/v1/deals/{deal['id']}")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(self.client.get(f"/v1/deals/{deal['id']}").status_code, 404)
+        self.assertEqual(self.client.get(f"/v1/assumption-sets/{version['id']}").status_code, 404)
+        self.assertEqual(self.client.delete(f"/v1/deals/{deal['id']}").status_code, 404)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -12,6 +13,16 @@ from .models import AssumptionSetRecord, CalculationResultRecord, CalculationRun
 
 
 ENGINE_VERSION = "0.1.0"
+
+
+@dataclass(frozen=True, slots=True)
+class DealSummary:
+    """A deal row for the pipeline list: newest version plus its latest solve."""
+
+    deal: DealRecord
+    version_count: int
+    latest_version: AssumptionSetRecord | None
+    latest_pricing_run: CalculationRunRecord | None
 
 
 class Repository:
@@ -30,8 +41,41 @@ class Repository:
     def list_deals(self) -> list[DealRecord]:
         return list(self.session.scalars(select(DealRecord).order_by(DealRecord.updated_at.desc(), DealRecord.created_at.desc())))
 
+    def list_deal_summaries(self) -> list[DealSummary]:
+        summaries = []
+        for deal in self.list_deals():
+            versions = self.list_assumption_sets(deal.id)
+            latest = versions[0] if versions else None
+            pricing_run = None
+            if latest is not None:
+                pricing_run = self.session.scalar(
+                    select(CalculationRunRecord)
+                    .options(joinedload(CalculationRunRecord.result))
+                    .where(
+                        CalculationRunRecord.assumption_set_id == latest.id,
+                        CalculationRunRecord.calculation_type == "maximum_price",
+                        CalculationRunRecord.status == "completed",
+                    )
+                    .order_by(CalculationRunRecord.created_at.desc())
+                    .limit(1)
+                )
+            summaries.append(DealSummary(deal, len(versions), latest, pricing_run))
+        return summaries
+
     def get_deal(self, deal_id: str) -> DealRecord | None:
         return self.session.get(DealRecord, deal_id)
+
+    def rename_deal(self, deal: DealRecord, name: str) -> DealRecord:
+        deal.name = name
+        deal.updated_at = datetime.now(timezone.utc)
+        self.session.commit()
+        self.session.refresh(deal)
+        return deal
+
+    def delete_deal(self, deal: DealRecord) -> None:
+        """Remove a deal with every version, run, and result it owns."""
+        self.session.delete(deal)
+        self.session.commit()
 
     def create_assumption_set(
         self,
@@ -93,6 +137,7 @@ class Repository:
             status="completed",
         )
         run.result = CalculationResultRecord(payload=result)
+        assumption_set.deal.updated_at = datetime.now(timezone.utc)
         self.session.add(run)
         self.session.commit()
         return self.get_run(run.id)  # type: ignore[return-value]

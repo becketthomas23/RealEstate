@@ -68,6 +68,10 @@ class DealCreateRequest(ApiModel):
         return value
 
 
+class DealRenameRequest(DealCreateRequest):
+    """A new display name for an existing deal."""
+
+
 class AssumptionSetCreateRequest(ApiModel):
     """A named, immutable set of inputs with the context needed to audit it."""
 
