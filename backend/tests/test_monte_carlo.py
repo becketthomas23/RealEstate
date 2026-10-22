@@ -124,3 +124,27 @@ class MonteCarloTests(unittest.TestCase):
     def test_market_calibration_accepts_percent_formatted_rates(self) -> None:
         self.assertEqual(_parse_rate("5.25%"), D("0.0525"))
         self.assertEqual(_parse_rate("0.0525"), D("0.0525"))
+
+    def test_rent_growth_schedule_is_shifted_rather_than_replaced(self) -> None:
+        from dataclasses import replace
+        from backend.workflows.underwriting.scenarios import apply_scenario_values
+
+        scheduled = replace(
+            self.underwriting,
+            operating=replace(self.underwriting.operating, annual_rent_growth_rates=(D("0.05"), D("0.04"), D("0.02"))),
+        )
+
+        scenario = apply_scenario_values(scheduled, {"rent_growth_rate": D("0.02")})
+
+        # A 2% case is 100 bps below the 3% base, so every scheduled year moves down 100 bps.
+        self.assertEqual(scenario.operating.annual_rent_growth_rates, (D("0.04"), D("0.03"), D("0.01")))
+        self.assertEqual(scenario.operating.rent_growth_rate, D("0.02"))
+        result = calculate_monte_carlo(
+            MonteCarloAssumptions(
+                underwriting=scheduled,
+                variables=(SimulationVariable("rent_growth_rate", "medium", D("50")),),
+                iterations=100,
+                seed=3,
+            )
+        )
+        self.assertEqual(result.iterations, 100)

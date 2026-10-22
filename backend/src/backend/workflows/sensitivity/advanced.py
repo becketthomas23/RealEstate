@@ -5,12 +5,13 @@ workflow.  It reruns the audited underwriting calculation for every selected
 scenario rather than solving for a purchase price.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal
 from itertools import product
 
 from backend.core.validation import ZERO, require_rate
 from backend.workflows.underwriting import UnderwritingAssumptions, calculate_underwriting
+from backend.workflows.underwriting.scenarios import apply_scenario_values
 
 
 SUPPORTED_DIMENSIONS = {
@@ -83,31 +84,13 @@ def calculate_advanced_sensitivity(assumptions: AdvancedSensitivityAssumptions) 
     for selected in product(*(dimension.values for dimension in assumptions.dimensions)):
         values = dict(zip((dimension.key for dimension in assumptions.dimensions), selected, strict=True))
         try:
-            result = calculate_underwriting(_apply_values(assumptions.underwriting, values))
+            result = calculate_underwriting(apply_scenario_values(assumptions.underwriting, values))
             metric_value = _metric_value(result, assumptions.metric)
         except ValueError as error:
             scenarios.append(AdvancedSensitivityScenario(values, None, str(error)))
         else:
             scenarios.append(AdvancedSensitivityScenario(values, metric_value, None))
     return AdvancedSensitivityResult(assumptions.metric, assumptions.dimensions, tuple(scenarios))
-
-
-def _apply_values(underwriting: UnderwritingAssumptions, values: dict[str, Decimal]) -> UnderwritingAssumptions:
-    operating = underwriting.operating
-    if "rent_growth_rate" in values:
-        # A sensitivity point represents a complete rent-growth case.  It
-        # therefore intentionally replaces a detailed period schedule.
-        operating = replace(operating, rent_growth_rate=values["rent_growth_rate"], annual_rent_growth_rates=None)
-    if "vacancy_rate" in values:
-        operating = replace(operating, vacancy_rate=values["vacancy_rate"])
-    if "expense_growth_rate" in values:
-        operating = replace(operating, expense_growth_rate=values["expense_growth_rate"])
-    result = replace(underwriting, operating=operating)
-    if "exit_cap_rate" in values:
-        result = replace(result, exit_cap_rate=values["exit_cap_rate"])
-    if "annual_interest_rate" in values:
-        result = replace(result, annual_interest_rate=values["annual_interest_rate"])
-    return result
 
 
 def _metric_value(result, metric: str) -> Decimal:

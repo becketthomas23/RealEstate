@@ -6,16 +6,28 @@ from .models import OperatingAssumptions, OperatingMonth, OperatingYear
 
 
 def project_operations(assumptions: OperatingAssumptions) -> tuple[OperatingYear, ...]:
-    """Return an immutable annual operating projection."""
-    years: list[OperatingYear] = []
+    """Return an immutable annual operating projection for the hold period."""
+    return tuple(project_operating_year(assumptions, year) for year in range(1, assumptions.hold_period_years + 1))
+
+
+def project_operating_year(assumptions: OperatingAssumptions, year: int) -> OperatingYear:
+    """Project any single year, including the forward year used for a sale.
+
+    Income compounds through the per-year rent-growth schedule; expenses grow
+    at the single expense-growth rate for the same number of growth periods.
+    """
     income = assumptions.current_potential_gross_income
-    for year in range(1, assumptions.hold_period_years + 1):
-        income *= ONE + assumptions.rent_growth_rate_for_year(year)
-        expenses = assumptions.current_operating_expenses * (ONE + assumptions.expense_growth_rate) ** year
-        vacancy_loss = income * assumptions.vacancy_rate
-        effective_income = income - vacancy_loss
-        years.append(OperatingYear(year, income, vacancy_loss, effective_income, expenses, effective_income - expenses))
-    return tuple(years)
+    for growth_year in range(1, year + 1):
+        income *= ONE + assumptions.rent_growth_rate_for_year(growth_year)
+    expenses = assumptions.current_operating_expenses * (ONE + assumptions.expense_growth_rate) ** assumptions.growth_periods_through(year)
+    vacancy_loss = income * assumptions.vacancy_rate
+    effective_income = income - vacancy_loss
+    return OperatingYear(year, income, vacancy_loss, effective_income, expenses, effective_income - expenses)
+
+
+def project_terminal_noi(assumptions: OperatingAssumptions):
+    """Return the forward NOI for the year after the hold, used to size the sale."""
+    return project_operating_year(assumptions, assumptions.hold_period_years + 1).net_operating_income
 
 
 def project_monthly_operations(assumptions: OperatingAssumptions) -> tuple[OperatingMonth, ...]:

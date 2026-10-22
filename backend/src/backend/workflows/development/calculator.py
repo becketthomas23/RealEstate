@@ -1,10 +1,10 @@
 """Compose construction financing, stabilization, permanent debt, and exit."""
 
-from backend.core.validation import ONE, ZERO
+from backend.core.validation import ZERO
 from backend.engines.construction import project_construction_loan
 from backend.engines.debt import DebtAssumptions, project_debt
 from backend.engines.disposition import DispositionAssumptions, calculate_disposition
-from backend.engines.operating import project_operations
+from backend.engines.operating import project_operations, project_terminal_noi
 from backend.engines.returns import ReturnAssumptions, calculate_returns
 
 from .models import DevelopmentAssumptions, DevelopmentResult, RefinanceResult
@@ -41,7 +41,7 @@ def calculate_development(assumptions: DevelopmentAssumptions) -> DevelopmentRes
         net_refinance_proceeds=net_refinance_proceeds,
         additional_equity_required=additional_equity_required,
     )
-    terminal_noi = _terminal_noi(assumptions)
+    terminal_noi = project_terminal_noi(assumptions.operating)
     disposition = calculate_disposition(
         DispositionAssumptions(
             terminal_noi=terminal_noi,
@@ -78,11 +78,3 @@ def calculate_development(assumptions: DevelopmentAssumptions) -> DevelopmentRes
         returns=returns,
     )
 
-
-def _terminal_noi(assumptions: DevelopmentAssumptions):
-    operating = assumptions.operating
-    income = operating.current_potential_gross_income
-    for year in range(1, operating.hold_period_years + 2):
-        income *= ONE + operating.rent_growth_rate_for_year(year)
-    expenses = operating.current_operating_expenses * (ONE + operating.expense_growth_rate) ** (operating.hold_period_years + 1)
-    return income * (ONE - operating.vacancy_rate) - expenses

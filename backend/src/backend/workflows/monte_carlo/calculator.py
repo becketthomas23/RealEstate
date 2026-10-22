@@ -1,12 +1,12 @@
 """Deterministic Monte Carlo sampling over audited underwriting calculations."""
 
-from dataclasses import replace
 from decimal import Decimal
 from random import Random
 from statistics import NormalDist
 
 from backend.core.validation import ZERO
 from backend.workflows.underwriting import calculate_underwriting
+from backend.workflows.underwriting.scenarios import apply_scenario_values, base_value
 
 from .models import DriverImpact, MonteCarloAssumptions, MonteCarloResult, RepresentativeCase, SimulationSummary, SimulationVariable
 
@@ -49,12 +49,12 @@ def calculate_monte_carlo(assumptions: MonteCarloAssumptions) -> MonteCarloResul
         values = {
             variable.key: _sample(
                 variable,
-                _base_value(assumptions, variable.key),
+                base_value(assumptions.underwriting, variable.key),
                 unit_interval=Decimal(str(normal.cdf(correlated_normals[index]))),
             )
             for index, variable in enumerate(assumptions.variables)
         }
-        result = calculate_underwriting(_apply_values(assumptions.underwriting, values))
+        result = calculate_underwriting(apply_scenario_values(assumptions.underwriting, values))
         for key, value in values.items():
             sampled_values[key].append(value)
         irr_values.append(result.returns.levered_irr)
@@ -85,20 +85,6 @@ def calculate_monte_carlo(assumptions: MonteCarloAssumptions) -> MonteCarloResul
         downside_case=_representative_case("P10 downside case", cases, Decimal("0.10")),
         upside_case=_representative_case("P90 upside case", cases, Decimal("0.90")),
     )
-
-
-def _base_value(assumptions: MonteCarloAssumptions, key: str) -> Decimal:
-    return _base_underwriting_value(assumptions.underwriting, key)
-
-
-def _base_underwriting_value(underwriting, key: str) -> Decimal:
-    if key == "rent_growth_rate":
-        return underwriting.operating.rent_growth_rate
-    if key == "vacancy_rate":
-        return underwriting.operating.vacancy_rate
-    if key == "expense_growth_rate":
-        return underwriting.operating.expense_growth_rate
-    return getattr(underwriting, key)
 
 
 def _sample(variable: SimulationVariable, base: Decimal, random: Random | None = None, unit_interval: Decimal | None = None) -> Decimal:
@@ -150,22 +136,6 @@ def _cholesky(matrix: list[list[float]]) -> list[list[float]]:
     return result
 
 
-def _apply_values(underwriting, values: dict[str, Decimal]):
-    operating = underwriting.operating
-    if "rent_growth_rate" in values:
-        operating = replace(operating, rent_growth_rate=values["rent_growth_rate"], annual_rent_growth_rates=None)
-    if "vacancy_rate" in values:
-        operating = replace(operating, vacancy_rate=values["vacancy_rate"])
-    if "expense_growth_rate" in values:
-        operating = replace(operating, expense_growth_rate=values["expense_growth_rate"])
-    result = replace(underwriting, operating=operating)
-    if "exit_cap_rate" in values:
-        result = replace(result, exit_cap_rate=values["exit_cap_rate"])
-    if "annual_interest_rate" in values:
-        result = replace(result, annual_interest_rate=values["annual_interest_rate"])
-    return result
-
-
 def _summary(metric: str, values: list[Decimal], target: Decimal | None = None) -> SimulationSummary:
     ordered = sorted(values)
     count = len(ordered)
@@ -213,9 +183,9 @@ def _driver_impacts(
 
 def _direct_effect_per_100_bps(underwriting, key: str, base_irr: Decimal, base_operating_cash_flow: Decimal) -> tuple[Decimal, Decimal]:
     """Calculate a direct rate effect while keeping every other input fixed."""
-    base_value = _base_underwriting_value(underwriting, key)
-    change = Decimal("0.01") if base_value + Decimal("0.01") < Decimal("0.9999") else Decimal("-0.01")
-    scenario = calculate_underwriting(_apply_values(underwriting, {key: base_value + change}))
+    current = base_value(underwriting, key)
+    change = Decimal("0.01") if current + Decimal("0.01") < Decimal("0.9999") else Decimal("-0.01")
+    scenario = calculate_underwriting(apply_scenario_values(underwriting, {key: current + change}))
     scale = Decimal("0.01") / change
     return (
         (sum(scenario.annual_operating_cash_flows, ZERO) - base_operating_cash_flow) * scale,

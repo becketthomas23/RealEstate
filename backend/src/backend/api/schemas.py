@@ -25,6 +25,9 @@ class OperatingAssumptionsRequest(ApiModel):
     expense_growth_rate: Decimal
     hold_period_years: int = Field(ge=5, le=10)
     annual_rent_growth_rates: list[Decimal] | None = Field(default=None, max_length=10)
+    # False: Year 1 equals the entered current figures and growth begins in
+    # Year 2. True: the entered figures are trailing and grow once before Year 1.
+    apply_growth_in_year_one: bool = False
 
 
 class UnderwritingRequest(ApiModel):
@@ -38,14 +41,19 @@ class UnderwritingRequest(ApiModel):
     operating: OperatingAssumptionsRequest
 
 
-class MaximumPriceRequest(ApiModel):
-    underwriting: UnderwritingRequest
+class PricingConstraints(ApiModel):
+    """Return and coverage constraints with an optional explicit price bracket."""
+
     target_levered_irr: Decimal
     minimum_dscr: Decimal
-    minimum_purchase_price: Decimal
-    maximum_purchase_price: Decimal
+    minimum_purchase_price: Decimal | None = None
+    maximum_purchase_price: Decimal | None = None
     price_tolerance: Decimal = Decimal("0.01")
     max_iterations: int = Field(default=100, ge=1)
+
+
+class MaximumPriceRequest(PricingConstraints):
+    underwriting: UnderwritingRequest
 
 
 class DealCreateRequest(ApiModel):
@@ -88,13 +96,8 @@ class AssumptionSetCreateRequest(ApiModel):
         return value
 
 
-class SavedMaximumPriceRequest(ApiModel):
-    target_levered_irr: Decimal
-    minimum_dscr: Decimal
-    minimum_purchase_price: Decimal
-    maximum_purchase_price: Decimal
-    price_tolerance: Decimal = Decimal("0.01")
-    max_iterations: int = Field(default=100, ge=1)
+class SavedMaximumPriceRequest(PricingConstraints):
+    """Pricing constraints applied to an already-persisted assumption set."""
 
 
 class ScenarioComparisonRequest(SavedMaximumPriceRequest):
@@ -151,23 +154,35 @@ class MonteCarloRequest(ApiModel):
 
 
 class SavedMonteCarloRequest(ApiModel):
+    """Simulate a saved version, optionally at a different analysis price.
+
+    ``purchase_price`` lets the risk analysis run at the solved maximum price
+    (or a proposed bid) instead of the reference price stored with the inputs.
+    The override is recorded with the run so the audit trail shows which price
+    the results describe.
+    """
+
     variables: list[SimulationVariableRequest] = Field(min_length=1, max_length=5)
     iterations: int = Field(default=1_000, ge=100, le=10_000)
     seed: int = 0
     target_levered_irr: Decimal | None = None
     correlations: list[CorrelationRequest] = Field(default_factory=list, max_length=10)
     market_context: MarketContextRequest | None = None
+    purchase_price: Decimal | None = Field(default=None, gt=0)
 
 
 class WaterfallRequest(ApiModel):
     underwriting: UnderwritingRequest
     preferred_return_rate: Decimal
     sponsor_residual_share: Decimal
+    pay_preferred_return_before_capital: bool = True
 
 
 class SavedWaterfallRequest(ApiModel):
     preferred_return_rate: Decimal
     sponsor_residual_share: Decimal
+    pay_preferred_return_before_capital: bool = True
+    purchase_price: Decimal | None = Field(default=None, gt=0)
 
 
 class ConstructionLoanRequest(ApiModel):
@@ -193,3 +208,30 @@ class DevelopmentRequest(ApiModel):
 
 class SavedSensitivityRequest(SavedMaximumPriceRequest):
     """Solver constraints for an already-persisted assumption set."""
+
+
+class ReportContext(ApiModel):
+    """Deal metadata and solver results that an export should present."""
+
+    deal_name: str | None = Field(default=None, max_length=200)
+    version_label: str | None = Field(default=None, max_length=200)
+    source: str | None = Field(default=None, max_length=2000)
+    effective_date: date | None = None
+    confidence_level: Literal["low", "medium", "high"] | None = None
+    analysis_basis: str | None = Field(default=None, max_length=300)
+    target_levered_irr: Decimal | None = None
+    minimum_dscr: Decimal | None = None
+    maximum_purchase_price: Decimal | None = None
+    recommended_bid_floor: Decimal | None = None
+    recommended_bid_ceiling: Decimal | None = None
+    binding_constraint: str | None = Field(default=None, max_length=50)
+
+
+class ExportRequest(UnderwritingRequest):
+    """An underwriting case plus optional reporting context.
+
+    The case's ``purchase_price`` is the price the report describes, so a
+    caller that wants the solved maximum price in the report passes it here.
+    """
+
+    report: ReportContext | None = None

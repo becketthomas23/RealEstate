@@ -8,10 +8,20 @@ from backend.core.validation import ONE, ZERO, require_non_negative, require_rat
 
 @dataclass(frozen=True, slots=True)
 class WaterfallAssumptions:
+    """Single-LP preferred-return waterfall inputs.
+
+    ``pay_preferred_return_before_capital`` selects the tier order. The
+    default pays the accrued preferred return before returning capital, the
+    most common structure in simple LP/sponsor agreements. Setting it to
+    ``False`` returns capital first, which lowers the base that the preferred
+    return accrues on and therefore favours the sponsor.
+    """
+
     initial_lp_equity: Decimal
     annual_property_cash_flows: tuple[Decimal, ...]
     preferred_return_rate: Decimal
     sponsor_residual_share: Decimal
+    pay_preferred_return_before_capital: bool = True
 
     def __post_init__(self) -> None:
         require_non_negative("initial_lp_equity", self.initial_lp_equity)
@@ -33,6 +43,7 @@ class WaterfallYear:
     year: int
     property_cash_flow: Decimal
     lp_capital_contribution: Decimal
+    accrued_preferred_return: Decimal
     return_of_capital_to_lp: Decimal
     preferred_return_to_lp: Decimal
     residual_to_lp: Decimal
@@ -51,3 +62,4 @@ class WaterfallResult:
     total_sponsor_distributed: Decimal
     lp_irr: Decimal
     lp_equity_multiple: Decimal
+    pay_preferred_return_before_capital: bool

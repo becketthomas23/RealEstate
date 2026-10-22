@@ -41,8 +41,13 @@ class UnderwritingAssumptions:
         return self.purchase_price * self.loan_to_value
 
     @property
+    def closing_costs(self) -> Decimal:
+        return self.purchase_price * self.closing_cost_rate
+
+    @property
     def initial_equity(self) -> Decimal:
-        return self.purchase_price * (ONE + self.closing_cost_rate) - self.loan_amount
+        """Equity funds the price plus closing costs; closing costs are not financed."""
+        return self.purchase_price + self.closing_costs - self.loan_amount
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +56,8 @@ class UnderwritingResult:
     monthly_operating_projection: tuple[OperatingMonth, ...]
     debt_projection: tuple[DebtYear, ...]
     terminal_noi: Decimal
+    # Year 1 NOI divided by purchase price. With the default Year 1 convention
+    # this equals the current (in-place) NOI yield.
     going_in_cap_rate: Decimal
     debt_yield: Decimal | None
     disposition: DispositionResult
@@ -58,3 +65,7 @@ class UnderwritingResult:
     annual_cash_flows: tuple[Decimal, ...]
     returns: ReturnMetrics
     risk_flags: tuple[RiskFlag, ...]
+    purchase_price: Decimal
+    loan_amount: Decimal
+    closing_costs: Decimal
+    initial_equity: Decimal

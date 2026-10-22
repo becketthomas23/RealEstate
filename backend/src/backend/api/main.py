@@ -24,6 +24,7 @@ from backend.workflows.sensitivity import (
     calculate_one_way_sensitivities,
 )
 from backend.workflows.underwriting import UnderwritingAssumptions, calculate_underwriting
+from dataclasses import replace
 from backend.workflows.monte_carlo import Correlation, MarketContext, MonteCarloAssumptions, SimulationVariable, calculate_monte_carlo
 from backend.workflows.monte_carlo.calibration import calculate_market_calibration, market_calibration_csv_template
 from backend.engines.waterfall import WaterfallAssumptions, calculate_waterfall
@@ -61,6 +62,7 @@ from .schemas import (
     WaterfallRequest,
     ConstructionLoanRequest,
     DevelopmentRequest,
+    ExportRequest,
     UnderwritingRequest,
 )
 
@@ -258,6 +260,7 @@ def waterfall(request: WaterfallRequest) -> dict[str, Any]:
                 annual_property_cash_flows=calculate_underwriting(underwriting).annual_cash_flows,
                 preferred_return_rate=request.preferred_return_rate,
                 sponsor_residual_share=request.sponsor_residual_share,
+                pay_preferred_return_before_capital=request.pay_preferred_return_before_capital,
             )
         )
     except ValueError as error:
@@ -316,17 +319,35 @@ async def import_underwriting(file: UploadFile = File(...)) -> dict[str, Any]:
 
 
 @app.post("/v1/exports/excel", tags=["exports"])
-def export_excel(request: UnderwritingRequest):
-    assumptions = _to_underwriting_assumptions(request)
-    result = calculate_underwriting(assumptions)
-    return StreamingResponse(excel_cash_flow(result, assumptions), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition":"attachment; filename=underwriting-cash-flow.xlsx"})
+def export_excel(request: ExportRequest):
+    """Export the case at the request's purchase price with any reporting context."""
+    assumptions, result, report = _export_inputs(request)
+    return StreamingResponse(
+        excel_cash_flow(result, assumptions, report),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=underwriting-cash-flow.xlsx"},
+    )
 
 
 @app.post("/v1/exports/memo", tags=["exports"])
-def export_memo(request: UnderwritingRequest):
-    assumptions = _to_underwriting_assumptions(request)
-    result = calculate_underwriting(assumptions)
-    return StreamingResponse(investment_memo(result, assumptions), media_type="application/pdf", headers={"Content-Disposition":"attachment; filename=investment-memo.pdf"})
+def export_memo(request: ExportRequest):
+    """Export an investment memo for the case at the request's purchase price."""
+    assumptions, result, report = _export_inputs(request)
+    return StreamingResponse(
+        investment_memo(result, assumptions, report),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=investment-memo.pdf"},
+    )
+
+
+def _export_inputs(request: ExportRequest):
+    try:
+        assumptions = _to_underwriting_assumptions(UnderwritingRequest.model_validate(request.model_dump(exclude={"report"})))
+        result = calculate_underwriting(assumptions)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    report = request.report.model_dump() if request.report is not None else None
+    return assumptions, result, report
 
 
 @app.post("/v1/deals", tags=["deals"], status_code=status.HTTP_201_CREATED)
@@ -533,7 +554,9 @@ def calculate_saved_monte_carlo(
     repository = Repository(session)
     assumptions = _require_assumption_set(repository, assumption_set_id)
     try:
-        result = calculate_monte_carlo(_to_monte_carlo_assumptions(request, _stored_underwriting_assumptions(assumptions)))
+        result = calculate_monte_carlo(
+            _to_monte_carlo_assumptions(request, _stored_underwriting_assumptions(assumptions, request.purchase_price))
+        )
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     serialized_result = _serialize(result)
@@ -556,13 +579,14 @@ def calculate_saved_waterfall(
     repository = Repository(session)
     assumptions = _require_assumption_set(repository, assumption_set_id)
     try:
-        underwriting = _stored_underwriting_assumptions(assumptions)
+        underwriting = _stored_underwriting_assumptions(assumptions, request.purchase_price)
         result = calculate_waterfall(
             WaterfallAssumptions(
                 initial_lp_equity=underwriting.initial_equity,
                 annual_property_cash_flows=calculate_underwriting(underwriting).annual_cash_flows,
                 preferred_return_rate=request.preferred_return_rate,
                 sponsor_residual_share=request.sponsor_residual_share,
+                pay_preferred_return_before_capital=request.pay_preferred_return_before_capital,
             )
         )
     except ValueError as error:
@@ -656,9 +680,16 @@ def _to_sensitivity_assumptions(
     )
 
 
-def _stored_underwriting_assumptions(assumption_set: AssumptionSetRecord) -> UnderwritingAssumptions:
-    """Revalidate persisted JSON before it reaches the calculation engine."""
-    return _to_underwriting_assumptions(UnderwritingRequest.model_validate(assumption_set.inputs))
+def _stored_underwriting_assumptions(
+    assumption_set: AssumptionSetRecord, purchase_price: Decimal | None = None
+) -> UnderwritingAssumptions:
+    """Revalidate persisted JSON before it reaches the calculation engine.
+
+    ``purchase_price`` substitutes an analysis price (for example the solved
+    maximum price) for the reference price stored with the immutable inputs.
+    """
+    underwriting = _to_underwriting_assumptions(UnderwritingRequest.model_validate(assumption_set.inputs))
+    return underwriting if purchase_price is None else replace(underwriting, purchase_price=purchase_price)
 
 
 def _require_deal(repository: Repository, deal_id: str) -> DealRecord:

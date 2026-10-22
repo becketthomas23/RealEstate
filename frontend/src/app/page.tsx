@@ -24,10 +24,9 @@ type Form = {
   annual_rent_growth_schedule: string;
   expense_growth_rate: string;
   hold_period_years: string;
+  growth_convention: "current" | "forward";
   target_levered_irr: string;
   minimum_dscr: string;
-  minimum_purchase_price: string;
-  maximum_purchase_price: string;
 };
 type OperatingInputs = Pick<
   Form,
@@ -37,7 +36,10 @@ type OperatingInputs = Pick<
   | "rent_growth_rate"
   | "expense_growth_rate"
   | "hold_period_years"
-> & { annual_rent_growth_rates?: string[] | null };
+> & {
+  annual_rent_growth_rates?: string[] | null;
+  apply_growth_in_year_one?: boolean;
+};
 type Inputs = Pick<
   Form,
   | "purchase_price"
@@ -48,12 +50,28 @@ type Inputs = Pick<
   | "exit_cap_rate"
   | "selling_cost_rate"
 > & { operating: OperatingInputs };
+type RiskFlag = {
+  code: string;
+  severity: string;
+  message: string;
+  observed_value: string;
+  threshold: string;
+};
 type Result = {
   maximum_purchase_price: string;
   recommended_bid_floor: string;
   recommended_bid_ceiling: string;
   iterations: number;
+  binding_constraint?: "target_levered_irr" | "minimum_dscr";
+  searched_minimum_price?: string;
+  searched_maximum_price?: string;
   underwriting: {
+    purchase_price?: string;
+    loan_amount?: string;
+    closing_costs?: string;
+    initial_equity?: string;
+    going_in_cap_rate: string;
+    debt_yield: string | null;
     terminal_noi: string;
     annual_operating_cash_flows: string[];
     annual_cash_flows: string[];
@@ -66,13 +84,7 @@ type Result = {
       minimum_dscr: string | null;
       cash_on_cash_by_year: string[];
     };
-    risk_flags: {
-      code: string;
-      severity: string;
-      message: string;
-      observed_value: string;
-      threshold: string;
-    }[];
+    risk_flags: RiskFlag[];
   };
 };
 type SensitivityPoint = {
@@ -161,6 +173,7 @@ type MonteCarloResult = {
   upside_case?: RepresentativeCase;
 };
 type WaterfallResult = {
+  pay_preferred_return_before_capital?: boolean;
   total_lp_contributed: string;
   total_lp_distributed: string;
   total_sponsor_distributed: string;
@@ -203,40 +216,53 @@ type Run = {
     | MonteCarloResult
     | WaterfallResult
     | null;
-  request?: Partial<
-    Pick<
-      Form,
-      | "target_levered_irr"
-      | "minimum_dscr"
-      | "minimum_purchase_price"
-      | "maximum_purchase_price"
-    >
-  >;
+  request?: Partial<Pick<Form, "target_levered_irr" | "minimum_dscr">> & {
+    purchase_price?: string | null;
+  };
 };
 type SavedCalculation = { calculation_run: Run; result: Result };
 type SavedSensitivity = { calculation_run: Run; result: SensitivityResult };
 type SavedAnalysis<T> = { calculation_run: Run; result: T };
 
+// Illustrative defaults only. They are internally consistent (a 6.5% going-in
+// yield against a 6.5% exit cap and 1.5x coverage) so the first solve reads
+// like a real deal rather than tripping risk flags out of the box.
 const initial: Form = {
-  purchase_price: "1000000",
+  purchase_price: "8500000",
   closing_cost_rate: "0.02",
   loan_to_value: "0.60",
-  annual_interest_rate: "0.05",
+  annual_interest_rate: "0.06",
   amortization_years: "30",
-  exit_cap_rate: "0.06",
+  exit_cap_rate: "0.065",
   selling_cost_rate: "0.02",
-  current_potential_gross_income: "200000",
-  current_operating_expenses: "50000",
+  current_potential_gross_income: "1000000",
+  current_operating_expenses: "400000",
   vacancy_rate: "0.05",
   rent_growth_rate: "0.03",
   annual_rent_growth_schedule: "",
-  expense_growth_rate: "0.02",
+  expense_growth_rate: "0.025",
   hold_period_years: "5",
+  growth_convention: "current",
   target_levered_irr: "0.12",
-  minimum_dscr: "1.20",
-  minimum_purchase_price: "100000",
-  maximum_purchase_price: "3000000",
+  minimum_dscr: "1.25",
 };
+// Display a stored decimal rate as a percentage without binary float noise
+// (0.07 * 100 is 7.000000000000001 in JavaScript).
+const toPercentText = (decimalRate: string) =>
+  decimalRate === "" ? "" : String(parseFloat((Number(decimalRate) * 100).toPrecision(12)));
+const fromPercentText = (percentText: string) =>
+  percentText === "" ? "" : String(parseFloat((Number(percentText) / 100).toPrecision(12)));
+const percent2 = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const constraintLabel = (key: Result["binding_constraint"]) =>
+  key === "minimum_dscr" ? "minimum DSCR" : "target IRR";
+const severityStyle = (severity: string) =>
+  severity === "critical"
+    ? "border-red-200 bg-red-50 text-red-900"
+    : "border-amber-200 bg-amber-50 text-amber-900";
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -297,6 +323,23 @@ function toUnderwritingInputs(form: Form): Inputs {
       annual_rent_growth_rates,
       expense_growth_rate: form.expense_growth_rate,
       hold_period_years: form.hold_period_years,
+      apply_growth_in_year_one: form.growth_convention === "forward",
+    },
+  };
+}
+function sameInputs(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+function normalizeInputs(inputs: Inputs) {
+  const { operating, ...property } = inputs;
+  const { annual_rent_growth_rates, apply_growth_in_year_one, ...rest } = operating;
+  const numeric = (value: string) => String(Number(value));
+  return {
+    ...Object.fromEntries(Object.entries(property).map(([key, value]) => [key, numeric(value)])),
+    operating: {
+      ...Object.fromEntries(Object.entries(rest).map(([key, value]) => [key, numeric(String(value))])),
+      annual_rent_growth_rates: annual_rent_growth_rates?.map(numeric) ?? null,
+      apply_growth_in_year_one: Boolean(apply_growth_in_year_one),
     },
   };
 }
@@ -360,10 +403,7 @@ function Field({
   negative?: boolean;
 }) {
   const percentage = suffix === "rate";
-  const value =
-    percentage && form[name] !== ""
-      ? String(Number(form[name]) * 100)
-      : form[name];
+  const value = percentage ? toPercentText(form[name]) : form[name];
   return (
     <label className="block text-sm font-medium text-stone-700">
       {label}
@@ -378,8 +418,7 @@ function Field({
             const raw = event.target.value;
             setForm({
               ...form,
-              [name]:
-                percentage && raw !== "" ? String(Number(raw) / 100) : raw,
+              [name]: percentage ? fromPercentText(raw) : raw,
             });
           }}
           className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base outline-none transition focus:border-emerald-700 focus:ring-4 focus:ring-emerald-100"
@@ -541,6 +580,7 @@ export default function Home() {
   const [waterfall, setWaterfall] = useState<WaterfallResult | null>(null);
   const [preferredReturn, setPreferredReturn] = useState("0.08");
   const [sponsorShare, setSponsorShare] = useState("0.20");
+  const [prefBeforeCapital, setPrefBeforeCapital] = useState(true);
   const [twoWayX, setTwoWayX] = useState<SensitivityKey>("rent_growth_rate");
   const [twoWayY, setTwoWayY] = useState<SensitivityKey>("exit_cap_rate");
   const [dealName, setDealName] = useState("New acquisition");
@@ -590,11 +630,13 @@ export default function Home() {
     setMarketPropertyType(saved.property_type);
     setMarketValueBucket(saved.value_bucket);
     const { operating, ...property } = saved.underwriting;
-    const { annual_rent_growth_rates, ...operatingFields } = operating;
+    const { annual_rent_growth_rates, apply_growth_in_year_one, ...operatingFields } =
+      operating;
     setForm((current) => ({
       ...current,
       ...property,
       ...operatingFields,
+      growth_convention: apply_growth_in_year_one ? "forward" : "current",
       annual_rent_growth_schedule:
         annual_rent_growth_rates
           ?.map((value) => String(Number(value) * 100))
@@ -623,8 +665,14 @@ export default function Home() {
       );
       if (latestSolver && isSolverResult(latestSolver.result)) {
         setResult(latestSolver.result);
-        if (latestSolver.request)
-          setForm((current) => ({ ...current, ...latestSolver.request }));
+        if (latestSolver.request) {
+          const { target_levered_irr, minimum_dscr } = latestSolver.request;
+          setForm((current) => ({
+            ...current,
+            ...(target_levered_irr ? { target_levered_irr } : {}),
+            ...(minimum_dscr ? { minimum_dscr } : {}),
+          }));
+        }
       }
       if (latestSensitivity && isSensitivityResult(latestSensitivity.result))
         setSensitivity(latestSensitivity.result);
@@ -719,37 +767,38 @@ export default function Home() {
         current = { ...created, assumption_sets: [] };
         setDeal(current);
       }
-      const {
-        target_levered_irr,
-        minimum_dscr,
-        minimum_purchase_price,
-        maximum_purchase_price,
-      } = form;
-      const saved = await api<Set>(
-        "/v1/deals/" + current.id + "/assumption-sets",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            label,
-            source: source || null,
-            effective_date: effectiveDate,
-            confidence_level: confidence,
-            property_type: marketPropertyType,
-            value_bucket: marketValueBucket,
-            underwriting,
-          }),
-        },
-      );
+      const { target_levered_irr, minimum_dscr } = form;
+      // Re-solving with identical inputs and metadata reuses the active
+      // version instead of cluttering the audit trail with duplicates.
+      const unchanged =
+        activeSet &&
+        activeSet.deal_id === current.id &&
+        activeSet.label === label &&
+        (activeSet.source ?? "") === source &&
+        activeSet.effective_date === effectiveDate &&
+        activeSet.confidence_level === confidence &&
+        activeSet.property_type === marketPropertyType &&
+        activeSet.value_bucket === marketValueBucket &&
+        sameInputs(normalizeInputs(activeSet.underwriting), normalizeInputs(underwriting));
+      const saved = unchanged
+        ? activeSet
+        : await api<Set>("/v1/deals/" + current.id + "/assumption-sets", {
+            method: "POST",
+            body: JSON.stringify({
+              label,
+              source: source || null,
+              effective_date: effectiveDate,
+              confidence_level: confidence,
+              property_type: marketPropertyType,
+              value_bucket: marketValueBucket,
+              underwriting,
+            }),
+          });
       const calculation = await api<SavedCalculation>(
         "/v1/assumption-sets/" + saved.id + "/maximum-price",
         {
           method: "POST",
-          body: JSON.stringify({
-            target_levered_irr,
-            minimum_dscr,
-            minimum_purchase_price,
-            maximum_purchase_price,
-          }),
+          body: JSON.stringify({ target_levered_irr, minimum_dscr }),
         },
       );
       const updated = await api<DealDetail>("/v1/deals/" + current.id);
@@ -757,15 +806,15 @@ export default function Home() {
       applySet(saved);
       setResult(calculation.result);
       setSensitivity(null);
+      setTwoWay(null);
       setSimulation(null);
       setWaterfall(null);
       await history(saved.id);
       await refreshDeals();
       setNotice(
-        "Saved " +
-          current.name +
-          " v" +
-          saved.version +
+        (unchanged
+          ? "Inputs unchanged; re-solved " + current.name + " v" + saved.version
+          : "Saved " + current.name + " v" + saved.version) +
           " and recorded the solver run.",
       );
     } catch (caught) {
@@ -784,22 +833,12 @@ export default function Home() {
     setError(null);
     setNotice(null);
     try {
-      const {
-        target_levered_irr,
-        minimum_dscr,
-        minimum_purchase_price,
-        maximum_purchase_price,
-      } = form;
+      const { target_levered_irr, minimum_dscr } = form;
       const calculation = await api<SavedSensitivity>(
         "/v1/assumption-sets/" + activeSet.id + "/sensitivities",
         {
           method: "POST",
-          body: JSON.stringify({
-            target_levered_irr,
-            minimum_dscr,
-            minimum_purchase_price,
-            maximum_purchase_price,
-          }),
+          body: JSON.stringify({ target_levered_irr, minimum_dscr }),
         },
       );
       setSensitivity(calculation.result);
@@ -974,6 +1013,7 @@ export default function Home() {
             target_levered_irr: form.target_levered_irr,
             correlations,
             market_context: marketCalibration?.context ?? null,
+            purchase_price: result?.maximum_purchase_price ?? null,
           }),
         },
       );
@@ -1012,6 +1052,8 @@ export default function Home() {
           body: JSON.stringify({
             preferred_return_rate: preferredReturn,
             sponsor_residual_share: sponsorShare,
+            pay_preferred_return_before_capital: prefBeforeCapital,
+            purchase_price: result?.maximum_purchase_price ?? null,
           }),
         },
       );
@@ -1032,10 +1074,30 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
+      const underwriting = toUnderwritingInputs(form);
+      if (result) underwriting.purchase_price = result.maximum_purchase_price;
       const response = await fetch(API_URL + `/v1/exports/${kind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toUnderwritingInputs(form)),
+        body: JSON.stringify({
+          ...underwriting,
+          report: {
+            deal_name: deal?.name ?? dealName,
+            version_label: activeSet?.label ?? label,
+            source: source || null,
+            effective_date: effectiveDate,
+            confidence_level: confidence,
+            analysis_basis: result
+              ? "solved maximum supportable price"
+              : "reference purchase price entered in the form",
+            target_levered_irr: form.target_levered_irr,
+            minimum_dscr: form.minimum_dscr,
+            maximum_purchase_price: result?.maximum_purchase_price ?? null,
+            recommended_bid_floor: result?.recommended_bid_floor ?? null,
+            recommended_bid_ceiling: result?.recommended_bid_ceiling ?? null,
+            binding_constraint: result?.binding_constraint ?? null,
+          },
+        }),
       });
       if (!response.ok) throw new Error("Export could not be created.");
       const url = URL.createObjectURL(await response.blob());
@@ -1232,11 +1294,17 @@ export default function Home() {
             </Section>
             <Section title="Acquisition & exit">
               {fields([
-                ["Reference purchase price", "purchase_price", "USD"],
+                ["Reference price (asking or guide)", "purchase_price", "USD"],
                 ["Closing costs", "closing_cost_rate", "rate"],
                 ["Exit cap rate", "exit_cap_rate", "rate"],
                 ["Selling costs", "selling_cost_rate", "rate"],
               ])}
+              <p className="mt-2 text-xs leading-5 text-stone-500">
+                The reference price seeds the solver and is not a constraint.
+                The maximum supportable price is solved from the return and
+                coverage targets below; every analysis panel then runs at that
+                solved price.
+              </p>
             </Section>
             <Section title="Operations">
               {fields([
@@ -1255,6 +1323,30 @@ export default function Home() {
                 ["Expense growth", "expense_growth_rate", "rate", true],
                 ["Hold period", "hold_period_years", "years"],
               ])}
+              <label className="mt-4 block text-sm font-medium text-stone-700">
+                Year 1 convention
+                <select
+                  value={form.growth_convention}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      growth_convention: event.target.value as Form["growth_convention"],
+                    })
+                  }
+                  className="mt-1.5 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 outline-none focus:border-emerald-700"
+                >
+                  <option value="current">
+                    Year 1 = current income and expenses; growth starts Year 2
+                  </option>
+                  <option value="forward">
+                    Entered figures are trailing; grow them once before Year 1
+                  </option>
+                </select>
+                <span className="mt-1 block text-xs font-normal text-stone-500">
+                  Going-in cap rate is always Year 1 NOI divided by price, so
+                  it matches the first row of the pro forma.
+                </span>
+              </label>
               <label className="mt-4 block text-sm font-medium text-stone-700">
                 Annual rent-growth schedule{" "}
                 <span className="font-normal text-stone-500">
@@ -1290,9 +1382,11 @@ export default function Home() {
               {fields([
                 ["Target levered IRR", "target_levered_irr", "rate"],
                 ["Minimum DSCR", "minimum_dscr", "x"],
-                ["Minimum price bound", "minimum_purchase_price", "USD"],
-                ["Maximum price bound", "maximum_purchase_price", "USD"],
               ])}
+              <p className="mt-2 text-xs leading-5 text-stone-500">
+                The solver finds the highest price that meets both targets and
+                reports which one binds. No search bounds are needed.
+              </p>
             </Section>
             {error && (
               <p
@@ -1342,8 +1436,20 @@ export default function Home() {
                         {money.format(Number(result.maximum_purchase_price))}
                       </p>
                     </div>
-                    <span className="rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-semibold text-stone-200">
-                      {result.iterations} iterations
+                    <span className="rounded-lg bg-white/10 px-2.5 py-1.5 text-right text-xs font-semibold text-stone-200">
+                      {result.binding_constraint
+                        ? "Bound by " + constraintLabel(result.binding_constraint)
+                        : result.iterations + " iterations"}
+                    </span>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+                    <span className="text-stone-400">Recommended bid range</span>
+                    <span className="font-semibold text-emerald-200">
+                      {money.format(Number(result.recommended_bid_floor))} –{" "}
+                      {money.format(Number(result.recommended_bid_ceiling))}
+                    </span>
+                    <span className="text-xs text-stone-500">
+                      95% of the maximum up to the maximum itself
                     </span>
                   </div>
                   <div className="my-7 grid grid-cols-3 gap-3 border-y border-white/10 py-5 text-center">
@@ -1381,7 +1487,44 @@ export default function Home() {
                       </p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 rounded-xl bg-white/5 p-3 text-xs">
+                  <div className="grid grid-cols-2 gap-3 rounded-xl bg-white/5 p-3 text-xs sm:grid-cols-3">
+                    <div>
+                      <p className="text-stone-400">Going-in cap rate</p>
+                      <p className="mt-1 font-semibold">
+                        {percent2.format(Number(result.underwriting.going_in_cap_rate))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-stone-400">Debt yield</p>
+                      <p className="mt-1 font-semibold">
+                        {result.underwriting.debt_yield === null
+                          ? "N/A · all-cash"
+                          : percent2.format(Number(result.underwriting.debt_yield))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-stone-400">Loan amount</p>
+                      <p className="mt-1 font-semibold">
+                        {money.format(
+                          Number(
+                            result.underwriting.loan_amount ??
+                              Number(result.maximum_purchase_price) * Number(form.loan_to_value),
+                          ),
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-stone-400">Equity required</p>
+                      <p className="mt-1 font-semibold">
+                        {money.format(
+                          Number(
+                            result.underwriting.initial_equity ??
+                              Number(result.maximum_purchase_price) *
+                                (1 + Number(form.closing_cost_rate) - Number(form.loan_to_value)),
+                          ),
+                        )}
+                      </p>
+                    </div>
                     <div>
                       <p className="text-stone-400">Terminal NOI</p>
                       <p className="mt-1 font-semibold">
@@ -1399,6 +1542,32 @@ export default function Home() {
                         )}
                       </p>
                     </div>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-stone-400">
+                      Risk flags at the solved price
+                    </p>
+                    {result.underwriting.risk_flags.length === 0 ? (
+                      <p className="mt-2 rounded-lg border border-emerald-400/20 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100">
+                        No rules-based risk flags triggered.
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-2">
+                        {result.underwriting.risk_flags.map((flag) => (
+                          <li
+                            key={flag.code}
+                            className={
+                              "rounded-lg border px-3 py-2 text-xs " + severityStyle(flag.severity)
+                            }
+                          >
+                            <span className="mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-current">
+                              {flag.severity}
+                            </span>
+                            {flag.message}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                   <CashFlowSchedule underwriting={result.underwriting} />
                 </>
@@ -1497,8 +1666,9 @@ export default function Home() {
                   <div>
                     <h2 className="text-base font-semibold">Exports</h2>
                     <p className="mt-1 text-xs text-stone-500">
-                      Download an auditable Excel cash-flow workbook or
-                      analytical PDF investment memo.
+                      Excel workbook or PDF memo for the solved case (
+                      {money.format(Number(result.maximum_purchase_price))}),
+                      including the bid range and the deal&apos;s version details.
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1634,8 +1804,9 @@ export default function Home() {
                       Return-risk simulation
                     </h2>
                     <p className="mt-1 text-xs leading-5 text-stone-500">
-                      Samples selected inputs across confidence-aware ranges. A
-                      loaded market calibration lets drivers move together.
+                      Samples selected inputs across confidence-aware ranges at
+                      the solved price ({money.format(Number(result.maximum_purchase_price))}).
+                      A loaded market calibration lets drivers move together.
                     </p>
                   </div>
                   <button
@@ -2052,8 +2223,10 @@ export default function Home() {
                       LP / sponsor waterfall
                     </h2>
                     <p className="mt-1 text-xs leading-5 text-stone-500">
-                      Returns capital, pays accrued preferred return, then
-                      splits residual cash flow.
+                      Allocates the equity cash flow at the solved price (
+                      {money.format(Number(result.maximum_purchase_price))}).
+                      Pref accrues yearly on outstanding LP capital, including
+                      capital-call years.
                     </p>
                   </div>
                   <button
@@ -2066,6 +2239,23 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3">
+                  <label className="col-span-2 text-xs font-semibold text-stone-600">
+                    Tier order
+                    <select
+                      value={prefBeforeCapital ? "pref_first" : "capital_first"}
+                      onChange={(event) =>
+                        setPrefBeforeCapital(event.target.value === "pref_first")
+                      }
+                      className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-2 py-2 text-sm"
+                    >
+                      <option value="pref_first">
+                        Accrued preferred return, then return of capital, then split
+                      </option>
+                      <option value="capital_first">
+                        Return of capital, then accrued preferred return, then split
+                      </option>
+                    </select>
+                  </label>
                   <label className="text-xs font-semibold text-stone-600">
                     Preferred return
                     <input
@@ -2073,11 +2263,9 @@ export default function Home() {
                       min="0"
                       max="99"
                       step="0.1"
-                      value={Number(preferredReturn) * 100}
+                      value={toPercentText(preferredReturn)}
                       onChange={(event) =>
-                        setPreferredReturn(
-                          String(Number(event.target.value) / 100),
-                        )
+                        setPreferredReturn(fromPercentText(event.target.value))
                       }
                       className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-2 py-2 text-sm"
                     />
@@ -2089,11 +2277,9 @@ export default function Home() {
                       min="0"
                       max="100"
                       step="1"
-                      value={Number(sponsorShare) * 100}
+                      value={toPercentText(sponsorShare)}
                       onChange={(event) =>
-                        setSponsorShare(
-                          String(Number(event.target.value) / 100),
-                        )
+                        setSponsorShare(fromPercentText(event.target.value))
                       }
                       className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-2 py-2 text-sm"
                     />

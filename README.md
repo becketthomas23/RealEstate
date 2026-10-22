@@ -17,8 +17,32 @@ This README is a living project document. Update it as the application, technica
 
 ## Latest update
 
-This release expands the original reverse-price solver into a more complete,
-auditable underwriting workspace:
+This release fixes the consistency problems found in an engine and output
+audit, so every panel describes the same deal:
+
+- **One analysis price:** the risk simulation, LP waterfall, and Excel/PDF
+  exports now run at the solved maximum supportable price (recorded with each
+  saved run) instead of the reference price typed into the form.
+- **Explicit Year 1 convention:** Year 1 equals the entered current income and
+  expenses by default, growth starts in Year 2, and the going-in cap rate is
+  always Year 1 NOI over price. A forward (grow-before-Year-1) option remains.
+- **Waterfall correction:** the preferred return now accrues in capital-call
+  years, and the tier order (pref-first by default, or capital-first) is a
+  visible setting.
+- **Self-bracketing solver:** the maximum-price solver finds its own search
+  range from the reference price and reports the binding constraint; price
+  bounds are optional.
+- **Schedule-preserving scenarios:** rent-growth simulations and grids shift a
+  year-by-year schedule instead of flattening it.
+- **Surfaced outputs:** the results panel now shows risk flags, the bid range,
+  going-in cap rate, debt yield, loan amount, and equity required. Exports
+  carry the deal name, version, targets, bid range, and binding constraint.
+- **Workspace hygiene:** percent inputs no longer show binary float noise,
+  re-solving unchanged inputs reuses the active version, and the illustrative
+  default deal is internally consistent.
+
+The previous release expanded the original reverse-price solver into a more
+complete, auditable underwriting workspace:
 
 - **More rigorous operating and return analysis:** monthly and annual cash
   flows reconcile, recurring cash-on-cash excludes terminal sale proceeds,
@@ -77,6 +101,7 @@ stabilized operations, and disposition in one return analysis.
 - Current NOI, rent growth (single rate or annual schedule), expense growth, and vacancy
 - Loan-to-value, interest rate, and amortization period
 - Target levered IRR and minimum DSCR
+- Optional Year 1 growth convention and LP waterfall tier order
 
 ### Calculated Outputs
 
@@ -97,6 +122,19 @@ stabilized operations, and disposition in one return analysis.
 
 ### Return conventions
 
+**Year 1 convention.** The operating inputs are the property's *current*
+potential gross income and operating expenses. By default Year 1 of the pro
+forma equals those figures and growth begins in Year 2, so the going-in cap
+rate (Year 1 NOI divided by price) is the current NOI yield. Analysts who
+enter trailing figures can set `apply_growth_in_year_one` to grow them once
+before Year 1 instead; the going-in cap rate is always Year 1 NOI over price.
+The sale is capitalized on the year after the hold (forward NOI).
+
+**Analysis price.** The reverse solver reports a maximum supportable price,
+and every downstream panel (risk simulation, waterfall, exports) runs at that
+solved price by default rather than at the reference price typed into the
+form. The price used is recorded with each saved run.
+
 To keep operating yield separate from a terminal disposition, annual
 cash-on-cash is calculated as recurring NOI less debt service divided by
 initial equity; it excludes sale proceeds. The final-year total equity cash
@@ -109,6 +147,16 @@ explicitly or use a metric with stated financing and reinvestment assumptions.
 
 All-cash acquisitions are supported. They carry no debt service or payoff, so
 minimum DSCR and debt yield are reported as **N/A — all-cash**, not as zero.
+
+**Waterfall.** The LP/sponsor waterfall accrues the preferred return every
+year on the LP capital outstanding at the start of that year, including years
+with a capital call, and carries unpaid pref forward without compounding. By
+default accrued pref is paid before capital is returned; a return-of-capital-
+first order is available as an explicit option.
+
+**Scenarios.** Rent-growth sensitivities and simulations shift an entered
+year-by-year schedule by the scenario's change from the base rate, so the
+scenario tests the deal that was modeled rather than a flattened version.
 
 ## Planned Architecture
 
@@ -299,7 +347,10 @@ solver bracket remain visible with their failure reason.
 ## Pricing convention
 
 The reverse solver reports the highest price that satisfies the entered return
-and debt-coverage constraints. Its recommended bid range is deliberately
+and debt-coverage constraints, together with the constraint that binds at that
+price. It brackets the answer itself by expanding or contracting from the
+reference purchase price; explicit minimum and maximum bounds remain optional
+for callers who want a fixed search range. Its recommended bid range is deliberately
 transparent: the floor is 95% of that maximum supportable price and the ceiling
 is the maximum supportable price itself. Analysts can therefore recognize the
 range as a negotiation buffer rather than a second valuation method.

@@ -1,9 +1,9 @@
 """Compose the independent engines into a complete underwriting run."""
 
-from backend.core.validation import ONE, ZERO
+from backend.core.validation import ZERO
 from backend.engines.debt import DebtAssumptions, DebtYear, project_debt
 from backend.engines.disposition import DispositionAssumptions, calculate_disposition
-from backend.engines.operating import project_monthly_operations, project_operations
+from backend.engines.operating import project_monthly_operations, project_operations, project_terminal_noi
 from backend.engines.returns import ReturnAssumptions, calculate_returns
 from backend.engines.risk import calculate_risk_flags
 
@@ -33,7 +33,7 @@ def calculate_underwriting(assumptions: UnderwritingAssumptions) -> Underwriting
             for year in range(1, assumptions.operating.hold_period_years + 1)
         )
     )
-    terminal_noi = _terminal_noi(assumptions)
+    terminal_noi = project_terminal_noi(assumptions.operating)
     disposition = calculate_disposition(
         DispositionAssumptions(
             terminal_noi=terminal_noi,
@@ -59,6 +59,8 @@ def calculate_underwriting(assumptions: UnderwritingAssumptions) -> Underwriting
             annual_debt_service=(tuple(year.debt_service for year in debt_projection) if assumptions.loan_amount > ZERO else ()),
         )
     )
+    year_one_noi = operating_projection[0].net_operating_income
+    going_in_cap_rate = year_one_noi / assumptions.purchase_price
     maximum_rent_growth = max(
         assumptions.operating.rent_growth_rate_for_year(year)
         for year in range(1, assumptions.operating.hold_period_years + 2)
@@ -68,7 +70,7 @@ def calculate_underwriting(assumptions: UnderwritingAssumptions) -> Underwriting
         loan_to_value=assumptions.loan_to_value,
         maximum_rent_growth=maximum_rent_growth,
         exit_cap_rate=assumptions.exit_cap_rate,
-        going_in_cap_rate=assumptions.operating.current_noi / assumptions.purchase_price,
+        going_in_cap_rate=going_in_cap_rate,
         annual_cash_flows=annual_cash_flows,
     )
     return UnderwritingResult(
@@ -76,21 +78,15 @@ def calculate_underwriting(assumptions: UnderwritingAssumptions) -> Underwriting
         monthly_operating_projection,
         debt_projection,
         terminal_noi,
-        assumptions.operating.current_noi / assumptions.purchase_price,
-        assumptions.operating.current_noi / assumptions.loan_amount if assumptions.loan_amount > ZERO else None,
+        going_in_cap_rate,
+        year_one_noi / assumptions.loan_amount if assumptions.loan_amount > ZERO else None,
         disposition,
         annual_operating_cash_flows,
         annual_cash_flows,
         returns,
         risk_flags,
+        assumptions.purchase_price,
+        assumptions.loan_amount,
+        assumptions.closing_costs,
+        assumptions.initial_equity,
     )
-
-
-def _terminal_noi(assumptions: UnderwritingAssumptions):
-    """Project next year's NOI for use in the sale calculation."""
-    operating = assumptions.operating
-    income = operating.current_potential_gross_income
-    for year in range(1, operating.hold_period_years + 2):
-        income *= ONE + operating.rent_growth_rate_for_year(year)
-    expenses = operating.current_operating_expenses * (ONE + operating.expense_growth_rate) ** (operating.hold_period_years + 1)
-    return income * (ONE - operating.vacancy_rate) - expenses

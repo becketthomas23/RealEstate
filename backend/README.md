@@ -36,9 +36,12 @@ Engines never import each other; the underwriting workflow is the only layer
 that composes them. The maximum-price solver calls that workflow, preserving
 independently testable, reproducible calculations.
 
-The price solver requires a range whose lower price meets both constraints and
-whose upper price fails at least one. This explicit bracket prevents a too-low
-search ceiling from being mistaken for a true maximum price.
+The price solver brackets its own search: starting from the reference purchase
+price it doubles until a price fails a constraint (or halves until one passes),
+then bisects. Callers may still supply an explicit range whose lower price
+meets both constraints and whose upper price fails at least one; that range is
+validated rather than silently accepted. The result names the binding
+constraint and the bracket that was searched.
 
 ## Debt convention
 
@@ -76,9 +79,9 @@ assumption and return constraint fixed:
 - Exit cap rate: lower/base/higher by 50 basis points.
 - Interest rate: lower/base/higher by 100 basis points (never below zero).
 
-Each scenario independently runs the same bounded price solver. A scenario with
-an invalid bracket is returned as unavailable with its reason; it does not hide
-the other cases.
+Each scenario independently runs the same self-bracketing price solver. A
+scenario that cannot be solved is returned as unavailable with its reason; it
+does not hide the other cases.
 
 ## Persistence and audit history
 

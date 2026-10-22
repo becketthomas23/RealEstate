@@ -50,3 +50,23 @@ class AdvancedSensitivityTests(unittest.TestCase):
                     AdvancedSensitivityDimension("vacancy_rate", (D("0.05"), D("0.06"))),
                 ),
             )
+
+    def test_rent_growth_grid_keeps_the_shape_of_a_scheduled_case(self) -> None:
+        from dataclasses import replace
+
+        scheduled = replace(
+            self.underwriting,
+            operating=replace(self.underwriting.operating, annual_rent_growth_rates=(D("0.06"), D("0.03"))),
+        )
+
+        flat = calculate_advanced_sensitivity(
+            AdvancedSensitivityAssumptions(self.underwriting, (AdvancedSensitivityDimension("rent_growth_rate", (D("0.03"), D("0.04"))),))
+        )
+        shaped = calculate_advanced_sensitivity(
+            AdvancedSensitivityAssumptions(scheduled, (AdvancedSensitivityDimension("rent_growth_rate", (D("0.03"), D("0.04"))),))
+        )
+
+        # The scheduled case has higher early growth, so its IRR must stay above the flat case
+        # in every scenario instead of collapsing onto the flat case's numbers.
+        for flat_case, shaped_case in zip(flat.scenarios, shaped.scenarios, strict=True):
+            self.assertGreater(shaped_case.metric_value, flat_case.metric_value)

@@ -78,10 +78,13 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["operating_projection"][0]["potential_gross_income"], "220000.00")
+        # Year 1 is the entered current year; the 10% step applies in Year 2 and 0% after.
+        self.assertEqual(body["operating_projection"][0]["potential_gross_income"], "200000")
         self.assertEqual(body["operating_projection"][1]["potential_gross_income"], "220000.00")
+        self.assertEqual(body["operating_projection"][2]["potential_gross_income"], "220000.00")
         self.assertEqual(len(body["monthly_operating_projection"]), 60)
-        self.assertEqual(body["monthly_operating_projection"][0]["net_operating_income"], "12333.33333333333333333333333")
+        self.assertEqual(body["monthly_operating_projection"][0]["net_operating_income"], "10833.33333333333333333333333")
+        self.assertEqual(body["monthly_operating_projection"][12]["net_operating_income"], "12333.33333333333333333333333")
 
     def test_underwriting_supports_an_all_cash_deal_and_exports_it_without_debt_metrics(self) -> None:
         request = {**UNDERWRITING_REQUEST, "loan_to_value": "0"}
@@ -486,3 +489,145 @@ class PersistedUnderwritingApiTests(unittest.TestCase):
         self.assertIsNone(scenarios[0]["error"])
         self.assertLess(float(scenarios[0]["maximum_purchase_price"]), float(scenarios[1]["maximum_purchase_price"]))
         self.assertEqual(scenarios[0]["recommended_bid_ceiling"], scenarios[0]["maximum_purchase_price"])
+
+
+class ConventionAndAnalysisPriceApiTests(unittest.TestCase):
+    """Cover the behaviours that make every panel describe the same deal."""
+
+    def setUp(self) -> None:
+        self.temp_directory = TemporaryDirectory()
+        self.original_database = api_main.database
+        database_path = Path(self.temp_directory.name) / "underwriting.db"
+        api_main.database = Database(f"sqlite:///{database_path.as_posix()}")
+        self.client_context = TestClient(api_main.app)
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        api_main.database.dispose()
+        api_main.database = self.original_database
+        self.temp_directory.cleanup()
+
+    def test_maximum_price_brackets_itself_and_names_the_binding_constraint(self) -> None:
+        response = client.post(
+            "/v1/maximum-price",
+            json={"underwriting": UNDERWRITING_REQUEST, "target_levered_irr": "0.10", "minimum_dscr": "1.00"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertLess(abs(float(body["maximum_purchase_price"]) - 1083333.33), 0.02)
+        self.assertEqual(body["binding_constraint"], "minimum_dscr")
+        self.assertEqual(body["underwriting"]["purchase_price"], body["maximum_purchase_price"])
+        self.assertIn("initial_equity", body["underwriting"])
+
+    def test_saved_risk_and_waterfall_runs_can_use_the_solved_analysis_price(self) -> None:
+        deal = self.client.post("/v1/deals", json={"name": "Analysis price"})
+        assumptions = self.client.post(f"/v1/deals/{deal.json()['id']}/assumption-sets", json={"underwriting": UNDERWRITING_REQUEST})
+        assumption_set_id = assumptions.json()["id"]
+        solved = self.client.post(
+            f"/v1/assumption-sets/{assumption_set_id}/maximum-price",
+            json={"target_levered_irr": "0.10", "minimum_dscr": "1.00"},
+        )
+        self.assertEqual(solved.status_code, 201)
+        analysis_price = solved.json()["result"]["maximum_purchase_price"]
+
+        simulation = self.client.post(
+            f"/v1/assumption-sets/{assumption_set_id}/monte-carlo",
+            json={
+                "variables": [{"key": "vacancy_rate", "confidence_level": "high", "confidence_percentage": "100"}],
+                "iterations": 100,
+                "seed": 1,
+                "target_levered_irr": "0.10",
+                "purchase_price": analysis_price,
+            },
+        )
+        waterfall = self.client.post(
+            f"/v1/assumption-sets/{assumption_set_id}/waterfall",
+            json={"preferred_return_rate": "0.08", "sponsor_residual_share": "0.20", "purchase_price": analysis_price},
+        )
+
+        self.assertEqual(simulation.status_code, 201)
+        self.assertEqual(simulation.json()["calculation_run"]["request"]["purchase_price"], analysis_price)
+        # The simulation describes the solved price: its median IRR sits near the
+        # IRR at that price, well below the 26.5% the 1,000,000 reference price gives.
+        solved_irr = float(solved.json()["result"]["underwriting"]["returns"]["levered_irr"])
+        median_irr = float(simulation.json()["result"]["levered_irr"]["percentile_50"])
+        self.assertLess(median_irr, 0.2646)
+        self.assertLess(abs(median_irr - solved_irr), 0.02)
+        self.assertEqual(waterfall.status_code, 201)
+        self.assertEqual(waterfall.json()["calculation_run"]["request"]["purchase_price"], analysis_price)
+        self.assertTrue(waterfall.json()["result"]["pay_preferred_return_before_capital"])
+        # The waterfall must distribute exactly the deal's cash flow.
+        lp = float(waterfall.json()["result"]["total_lp_distributed"])
+        sponsor = float(waterfall.json()["result"]["total_sponsor_distributed"])
+        total_cash_flow = sum(float(flow) for flow in solved.json()["result"]["underwriting"]["annual_cash_flows"])
+        self.assertAlmostEqual(lp + sponsor, total_cash_flow, places=4)
+
+    def test_waterfall_tier_order_is_selectable(self) -> None:
+        pref_first = client.post(
+            "/v1/waterfall",
+            json={"underwriting": UNDERWRITING_REQUEST, "preferred_return_rate": "0.08", "sponsor_residual_share": "0.20"},
+        )
+        capital_first = client.post(
+            "/v1/waterfall",
+            json={
+                "underwriting": UNDERWRITING_REQUEST,
+                "preferred_return_rate": "0.08",
+                "sponsor_residual_share": "0.20",
+                "pay_preferred_return_before_capital": False,
+            },
+        )
+
+        self.assertEqual(pref_first.status_code, 200)
+        self.assertEqual(capital_first.status_code, 200)
+        self.assertLess(
+            float(pref_first.json()["total_sponsor_distributed"]),
+            float(capital_first.json()["total_sponsor_distributed"]),
+        )
+
+    def test_exports_accept_report_context_and_describe_the_analysis_price(self) -> None:
+        request = {
+            **UNDERWRITING_REQUEST,
+            "purchase_price": "1083333.33",
+            "report": {
+                "deal_name": "Maple Apartments",
+                "version_label": "IC base case",
+                "analysis_basis": "solved maximum supportable price",
+                "target_levered_irr": "0.10",
+                "minimum_dscr": "1.00",
+                "maximum_purchase_price": "1083333.33",
+                "recommended_bid_floor": "1029166.66",
+                "recommended_bid_ceiling": "1083333.33",
+                "binding_constraint": "minimum_dscr",
+            },
+        }
+
+        workbook = client.post("/v1/exports/excel", json=request)
+        memo = client.post("/v1/exports/memo", json=request)
+
+        self.assertEqual(workbook.status_code, 200)
+        summary = load_workbook(BytesIO(workbook.content), data_only=True)["Summary"]
+        labels = {row[0].value: row[1].value for row in summary.iter_rows(min_row=2)}
+        self.assertEqual(labels["Deal"], "Maple Apartments")
+        self.assertEqual(labels["Analysis basis"], "solved maximum supportable price")
+        self.assertEqual(str(labels["Analysis purchase price"]), "1083333.33")
+        self.assertEqual(labels["Binding constraint"], "minimum dscr")
+        self.assertEqual(memo.status_code, 200)
+        self.assertTrue(memo.content.startswith(b"%PDF"))
+
+    def test_year_one_growth_convention_is_selectable(self) -> None:
+        grown = {
+            **UNDERWRITING_REQUEST,
+            "operating": {**UNDERWRITING_REQUEST["operating"], "rent_growth_rate": "0.10", "apply_growth_in_year_one": True},
+        }
+        current = {**grown, "operating": {**grown["operating"], "apply_growth_in_year_one": False}}
+
+        grown_body = client.post("/v1/underwriting", json=grown).json()
+        current_body = client.post("/v1/underwriting", json=current).json()
+
+        self.assertEqual(grown_body["operating_projection"][0]["potential_gross_income"], "220000.00")
+        self.assertEqual(current_body["operating_projection"][0]["potential_gross_income"], "200000")
+        # Going-in cap is Year 1 NOI / price under either convention.
+        self.assertEqual(current_body["going_in_cap_rate"], "0.13")
+        self.assertAlmostEqual(float(grown_body["going_in_cap_rate"]), (220000 * 0.9 - 50000) / 1000000, places=12)
