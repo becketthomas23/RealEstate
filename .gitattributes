@@ -1,0 +1,7 @@
+# Keep binary deliverables byte-exact on every platform.
+*.pdf binary
+*.xlsx binary
+*.docx binary
+*.png binary
+*.ico binary
+*.db binary
