@@ -47,13 +47,13 @@ export function InputsTab({ workspace }: { workspace: Workspace }) {
         )}
         <Card
           title="Version details"
-          description="Every save is an immutable, numbered version. Record where the numbers came from so the result can be audited later."
+          description="Every save is an immutable, numbered version. Import a broker packet with a Deal Scope Data Sheet, the Excel template, or a CSV, and record where the numbers came from."
           actions={
             <>
               <input
                 ref={fileInput}
                 type="file"
-                accept=".xlsx,.xlsm,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                accept=".pdf,.xlsx,.xlsm,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -62,10 +62,13 @@ export function InputsTab({ workspace }: { workspace: Workspace }) {
                 }}
               />
               <Button type="button" variant="secondary" size="sm" onClick={() => fileInput.current?.click()} busy={busy === "import"}>
-                Import Excel or CSV
+                Import packet, Excel or CSV
               </Button>
               <a href={API_URL + "/v1/imports/underwriting-workbook-template"} className="text-xs font-semibold text-primary-ink underline-offset-2 hover:underline">
                 Excel template
+              </a>
+              <a href={API_URL + "/v1/imports/data-sheet-template"} className="text-xs font-semibold text-primary-ink underline-offset-2 hover:underline">
+                PDF data sheet
               </a>
               <a href={API_URL + "/v1/imports/underwriting-template"} className="text-xs font-semibold text-ink-muted underline-offset-2 hover:underline">
                 CSV

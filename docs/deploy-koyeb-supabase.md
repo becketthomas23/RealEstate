@@ -1,4 +1,4 @@
-# Deploy on Koyeb + Supabase
+# Deploy Deal Scope on Koyeb + Supabase
 
 This project deploys as one Docker web service: the FastAPI server serves the
 website and API from the same URL. Koyeb runs the service and Supabase stores
@@ -8,12 +8,12 @@ the PostgreSQL data.
 
 Create a new **private** GitHub repository, then publish this folder to it.
 Keep the repository private because it contains the application source, even
-though the eventual website has its own shared-password screen.
+though the eventual website has its own sign-in screen.
 
 ## 2. Create the free Supabase database
 
 1. Create a Supabase account and select **New project**.
-2. Give the project a name such as `cre-price-solver`, choose a region near you,
+2. Give the project a name such as `deal-scope`, choose a region near you,
    and save the database password in a password manager.
 3. Once the database is ready, select **Connect**.
 4. Copy the **Session pooler** connection string. This is the right connection
@@ -38,8 +38,10 @@ it in chat.
    | Name | Value |
    | --- | --- |
    | `DATABASE_URL` | The Supabase Session pooler connection string |
-   | `APP_ACCESS_PASSWORD` | The shared password people will enter at the website |
-   | `APP_SESSION_SECRET` | A separate random secret; never reuse the password |
+   | `APP_SESSION_SECRET` | A random secret that signs session cookies |
+   | `APP_ADMIN_EMAIL` | Email of the first administrator (created on first start) |
+   | `APP_ADMIN_PASSWORD` | That administrator's initial password (8+ characters) |
+   | `APP_ADMIN_NAME` | Display name for the first administrator |
    | `APP_REQUIRE_AUTH` | `true` |
    | `APP_SESSION_COOKIE_SECURE` | `true` |
 
@@ -48,11 +50,14 @@ it in chat.
 
 ## 4. Verify the live site
 
-Open the Koyeb URL. You should see the password screen. On your computer, run:
+Open the Koyeb URL. You should see the Deal Scope sign-in screen. Sign in as
+the administrator, then add teammates under **Team and access**. On your
+computer, run:
 
 ```powershell
 cd backend
-$env:SMOKE_TEST_PASSWORD = "your shared website password"
+$env:SMOKE_TEST_EMAIL = "you@yourfirm.com"
+$env:SMOKE_TEST_PASSWORD = "your password"
 uv run python scripts/smoke_test.py https://your-koyeb-url.koyeb.app
 ```
 

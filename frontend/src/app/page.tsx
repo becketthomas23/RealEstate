@@ -5,12 +5,21 @@ import { useRouter } from "next/navigation";
 import { AppShell, PageHeader } from "@/components/shell";
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, Stat, TextInput } from "@/components/ui";
 import { api, del, patch, post } from "@/lib/api";
+import { RequireSession } from "@/lib/auth";
 import { constraintLabel, money, multiple, percent, shortDate } from "@/lib/format";
 import type { Deal, DealSummary } from "@/lib/types";
 
 type Sort = "updated" | "name" | "price";
 
 export default function DealListPage() {
+  return (
+    <RequireSession>
+      <DealList />
+    </RequireSession>
+  );
+}
+
+function DealList() {
   const router = useRouter();
   const [deals, setDeals] = useState<DealSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);

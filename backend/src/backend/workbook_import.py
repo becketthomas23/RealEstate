@@ -29,7 +29,7 @@ SECTION_FILL = "E6F2EA"
 
 # (section, label, example value, unit, note, key)
 ASSUMPTION_ROWS: tuple[tuple[str, str, Any, str, str, str], ...] = (
-    ("Property", "Property name", "Maple Street Apartments", "text", "Used as the deal name if you create a deal from this file.", "property_name"),
+    ("Property", "Property name", "Maple Street Apartments", "text", "Shown on exports; the deal name in Deal Scope is set when the deal is created.", "property_name"),
     ("Property", "Address", "100 Maple Street, Springfield", "text", "", "address"),
     ("Property", "Property type", "Multifamily", "text", "Multifamily, Office, Industrial, Retail, Mixed-use…", "property_type"),
     ("Property", "Property class", "B", "text", "A, B or C", "property_class"),
@@ -219,7 +219,23 @@ def parse_underwriting_workbook(contents: bytes) -> WorkbookImport:
     rent_roll = _read_table(_find_sheet(book, ("rent roll", "rentroll", "unit mix")), RENT_ROLL_COLUMNS)
     other_income = _read_table(_find_sheet(book, ("other income", "income")), INCOME_COLUMNS)
     expense_lines = _read_table(_find_sheet(book, ("operating expenses", "expenses", "opex")), EXPENSE_COLUMNS)
+    return build_import(raw, sources, rent_roll, other_income, expense_lines, warnings)
 
+
+def build_import(
+    raw: dict[str, Any],
+    sources: dict[str, str],
+    rent_roll: list[tuple[Any, ...]],
+    other_income: list[tuple[Any, ...]],
+    expense_lines: list[tuple[Any, ...]],
+    warnings: list[str] | None = None,
+) -> WorkbookImport:
+    """Turn recognised label values and detail rows into validated API contracts.
+
+    Shared by the Excel template parser and the PDF packet parser so both
+    sources apply the same roll-ups, validation, and warnings.
+    """
+    warnings = list(warnings or [])
     rent_roll_lines = [
         {
             "unit_type": str(line[0]).strip(),
@@ -337,7 +353,7 @@ def parse_underwriting_workbook(contents: bytes) -> WorkbookImport:
 
 def _write_instructions(sheet: Worksheet) -> None:
     lines = (
-        ("CRE Price Solver — underwriting import template", True),
+        ("Deal Scope — underwriting import template", True),
         ("", False),
         ("1. Fill the Assumptions sheet. Labels are matched flexibly (for example LTV, Loan-to-value, or Leverage all work).", False),
         ("2. Percentages may be typed as 5, 5% or 0.05. Dates may be typed or formatted as Excel dates.", False),

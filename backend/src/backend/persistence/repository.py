@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import AssumptionSetRecord, CalculationResultRecord, CalculationRunRecord, DealRecord
+from .models import AssumptionSetRecord, CalculationResultRecord, CalculationRunRecord, DealRecord, UserRecord
 
 
 ENGINE_VERSION = "0.1.0"
@@ -31,8 +31,43 @@ class Repository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def create_deal(self, name: str) -> DealRecord:
-        deal = DealRecord(name=name)
+    # ----------------------------------------------------------- users
+
+    def count_users(self) -> int:
+        return int(self.session.scalar(select(func.count()).select_from(UserRecord)) or 0)
+
+    def list_users(self) -> list[UserRecord]:
+        return list(self.session.scalars(select(UserRecord).order_by(UserRecord.created_at.asc())))
+
+    def get_user(self, user_id: str) -> UserRecord | None:
+        return self.session.get(UserRecord, user_id)
+
+    def get_user_by_email(self, email: str) -> UserRecord | None:
+        return self.session.scalar(select(UserRecord).where(UserRecord.email == email.strip().lower()))
+
+    def create_user(self, *, email: str, name: str, password_hash: str, role: str) -> UserRecord:
+        user = UserRecord(email=email.strip().lower(), name=name.strip(), password_hash=password_hash, role=role)
+        self.session.add(user)
+        self.session.commit()
+        self.session.refresh(user)
+        return user
+
+    def update_user(self, user: UserRecord, **changes: Any) -> UserRecord:
+        for key, value in changes.items():
+            if value is not None:
+                setattr(user, key, value)
+        self.session.commit()
+        self.session.refresh(user)
+        return user
+
+    def record_login(self, user: UserRecord) -> None:
+        user.last_login_at = datetime.now(timezone.utc)
+        self.session.commit()
+
+    # ----------------------------------------------------------- deals
+
+    def create_deal(self, name: str, created_by: str | None = None) -> DealRecord:
+        deal = DealRecord(name=name, created_by=created_by)
         self.session.add(deal)
         self.session.commit()
         self.session.refresh(deal)
@@ -89,6 +124,7 @@ class Repository:
         value_bucket: str,
         inputs: dict[str, Any],
         supporting_detail: dict[str, Any] | None = None,
+        created_by: str | None = None,
     ) -> AssumptionSetRecord:
         latest_version = self.session.scalar(
             select(func.max(AssumptionSetRecord.version)).where(AssumptionSetRecord.deal_id == deal.id)
@@ -104,6 +140,7 @@ class Repository:
             value_bucket=value_bucket,
             inputs=inputs,
             supporting_detail=supporting_detail,
+            created_by=created_by,
         )
         deal.updated_at = datetime.now(timezone.utc)
         self.session.add(assumptions)

@@ -14,7 +14,35 @@ class ApiModel(BaseModel):
 
 
 class LoginRequest(ApiModel):
+    email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=512)
+
+
+class UserCreateRequest(ApiModel):
+    email: str = Field(min_length=3, max_length=320)
+    name: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=8, max_length=512)
+    role: Literal["admin", "analyst"] = "analyst"
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("email must be a valid address")
+        return value
+
+
+class UserUpdateRequest(ApiModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    role: Literal["admin", "analyst"] | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=512)
+
+
+class PasswordChangeRequest(ApiModel):
+    current_password: str = Field(min_length=1, max_length=512)
+    new_password: str = Field(min_length=8, max_length=512)
 
 
 class OperatingAssumptionsRequest(ApiModel):

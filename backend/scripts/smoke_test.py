@@ -45,7 +45,8 @@ def main() -> None:
         "--frontend-url",
         help="Optional separate frontend URL for local two-port development, for example http://127.0.0.1:3000",
     )
-    parser.add_argument("--password", default=os.getenv("SMOKE_TEST_PASSWORD"), help="Optional shared password; prefer SMOKE_TEST_PASSWORD")
+    parser.add_argument("--email", default=os.getenv("SMOKE_TEST_EMAIL"), help="Account email for a protected deployment; prefer SMOKE_TEST_EMAIL")
+    parser.add_argument("--password", default=os.getenv("SMOKE_TEST_PASSWORD"), help="Account password; prefer SMOKE_TEST_PASSWORD")
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
     frontend_url = (args.frontend_url or base_url).rstrip("/")
@@ -55,7 +56,7 @@ def main() -> None:
         health_status, _, health = request(opener, f"{base_url}/health")
         site_status, site_type, _ = request(opener, f"{frontend_url}/")
         if args.password:
-            login_status, _, login = request(opener, f"{base_url}/v1/auth/login", method="POST", payload={"password": args.password})
+            login_status, _, login = request(opener, f"{base_url}/v1/auth/login", method="POST", payload={"email": args.email, "password": args.password})
             if login_status != 200 or login != {"authenticated": True}:
                 raise SystemExit(f"Sign-in check failed: status={login_status}, body={login}")
         calculation_status, _, calculation = request(opener, f"{base_url}/v1/underwriting", method="POST", payload=UNDERWRITING_REQUEST)

@@ -1,4 +1,4 @@
-# CRE Price Solver frontend
+# Deal Scope frontend
 
 The Next.js frontend is the analyst-facing product for the reverse-solver
 workflow. It has two screens:

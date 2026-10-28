@@ -445,8 +445,9 @@ export function useDealWorkspace(dealId: string | null) {
     run("import", async () => {
       const data = new FormData();
       data.append("file", file);
-      if (/\.xls[xm]$/i.test(file.name)) {
-        const imported = await api<WorkbookImportResult>("/v1/imports/underwriting-workbook", { method: "POST", body: data });
+      const isPacket = /\.pdf$/i.test(file.name);
+      if (isPacket || /\.xls[xm]$/i.test(file.name)) {
+        const imported = await api<WorkbookImportResult>(isPacket ? "/v1/imports/deal-packet" : "/v1/imports/underwriting-workbook", { method: "POST", body: data });
         setForm((current) => ({
           ...formFromInputs(imported.underwriting, current),
           ...(imported.targets.target_levered_irr ? { target_levered_irr: imported.targets.target_levered_irr } : {}),
@@ -467,8 +468,8 @@ export function useDealWorkspace(dealId: string | null) {
           .filter(([, source]) => source.startsWith("rolled up"))
           .map(([key]) => key.replaceAll("_", " "));
         setNotice(
-          `Loaded ${file.name}` +
-            (rolled.length ? ` (${rolled.join(" and ")} rolled up from the detail sheets)` : "") +
+          (isPacket ? `Read the Deal Scope Data Sheet in ${file.name}` : `Loaded ${file.name}`) +
+            (rolled.length ? ` (${rolled.join(" and ")} rolled up from the detail tables)` : "") +
             ". Review the inputs, then save and solve to create a version.",
         );
       } else {

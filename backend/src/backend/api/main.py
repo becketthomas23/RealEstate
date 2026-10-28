@@ -33,17 +33,20 @@ from backend.workflows.development import DevelopmentAssumptions, calculate_deve
 from backend.reports import investment_memo
 from backend.exports.workbook import build_underwriting_workbook
 from backend.workbook_import import parse_underwriting_workbook, underwriting_workbook_template
+from backend.packet_import import data_sheet_template_pdf, parse_deal_packet
 from backend.imports import parse_underwriting_csv, underwriting_csv_template
 from backend.persistence import Database, Repository
-from backend.persistence.models import AssumptionSetRecord, CalculationRunRecord, DealRecord
+from backend.persistence.models import AssumptionSetRecord, CalculationRunRecord, DealRecord, UserRecord
 from .access import (
     SESSION_COOKIE_NAME,
     SESSION_LIFETIME_SECONDS,
     access_is_required,
+    bootstrap_admin,
     cookie_requires_https,
     create_session_token,
-    password_is_valid,
-    session_is_valid,
+    hash_password,
+    password_matches,
+    session_user_id,
     validate_access_configuration,
 )
 
@@ -53,6 +56,9 @@ from .schemas import (
     AdvancedSensitivityRequest,
     DealCreateRequest,
     LoginRequest,
+    PasswordChangeRequest,
+    UserCreateRequest,
+    UserUpdateRequest,
     MaximumPriceRequest,
     OperatingAssumptionsRequest,
     SavedMaximumPriceRequest,
@@ -73,72 +79,133 @@ from .schemas import (
 database = Database()
 
 
+def get_session() -> Generator[Session, None, None]:
+    yield from database.session()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     validate_access_configuration()
     database.upgrade_schema()
+    _bootstrap_first_admin()
     yield
     database.dispose()
 
 
+def _bootstrap_first_admin() -> None:
+    """Create the first administrator from the environment when no users exist."""
+    if not access_is_required():
+        return
+    credentials = bootstrap_admin()
+    for session in database.session():
+        repository = Repository(session)
+        if repository.count_users() > 0:
+            return
+        if credentials is None:
+            raise RuntimeError("APP_ADMIN_EMAIL and APP_ADMIN_PASSWORD are required to create the first user when APP_REQUIRE_AUTH is enabled")
+        email, name, password = credentials
+        repository.create_user(email=email, name=name, password_hash=hash_password(password), role="admin")
+
+
 app = FastAPI(
-    title="CRE Reverse-Solver Underwriting API",
-    version="0.1.0",
-    description="Transparent annual stabilized-property underwriting calculations.",
+    title="Deal Scope API",
+    version="1.0.0",
+    description="Deal Scope: transparent commercial real estate underwriting, pricing, and risk analysis.",
     lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
 
 class AccessMiddleware(BaseHTTPMiddleware):
-    """Require a signed browser session when protected deployment mode is enabled."""
+    """Resolve the signed-in user and protect everything but the public paths."""
 
     public_paths = {"/health", "/login", "/login/", "/v1/auth/login", "/v1/auth/logout", "/v1/auth/session", "/favicon.ico"}
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if not access_is_required() or path in self.public_paths or path.startswith("/_next/"):
+        request.state.user = None
+        if not access_is_required():
             return await call_next(request)
-        if session_is_valid(request.cookies.get(SESSION_COOKIE_NAME)):
+        user = _resolve_user(request.cookies.get(SESSION_COOKIE_NAME))
+        request.state.user = user
+        if path in self.public_paths or path.startswith("/_next/") or user is not None:
             return await call_next(request)
         if path.startswith("/v1/"):
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "password required"})
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "sign in required"})
         return RedirectResponse(url="/login/", status_code=status.HTTP_303_SEE_OTHER)
 
 
 app.add_middleware(AccessMiddleware)
 
 
+def _resolve_user(token: str | None) -> UserRecord | None:
+    user_id = session_user_id(token)
+    if user_id is None:
+        return None
+    for session in database.session():
+        user = Repository(session).get_user(user_id)
+        return user if user is not None and user.is_active else None
+    return None
+
+
+def current_user(request: Request) -> UserRecord | None:
+    return getattr(request.state, "user", None)
+
+
+def require_admin(request: Request) -> UserRecord:
+    user = current_user(request)
+    if not access_is_required():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user management is available only when sign-in is enabled")
+    if user is None or user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="administrator access required")
+    return user
+
+
+def _actor(request: Request) -> str | None:
+    user = current_user(request)
+    return user.email if user is not None else None
+
+
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "product": "Deal Scope"}
 
 
 @app.get("/v1/auth/session", tags=["access"])
-def access_session(request: Request) -> dict[str, bool]:
-    return {"authenticated": not access_is_required() or session_is_valid(request.cookies.get(SESSION_COOKIE_NAME))}
+def access_session(request: Request) -> dict[str, Any]:
+    user = current_user(request)
+    return {
+        "required": access_is_required(),
+        "authenticated": not access_is_required() or user is not None,
+        "user": _serialize_user(user) if user is not None else None,
+    }
 
 
 @app.post("/v1/auth/login", tags=["access"])
-def login(request: LoginRequest, response: Response) -> dict[str, bool]:
-    if not access_is_required() or not password_is_valid(request.password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid password")
+def login(request: LoginRequest, response: Response, session: Session = Depends(get_session)) -> dict[str, Any]:
+    if not access_is_required():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sign-in is not enabled for this deployment")
+    repository = Repository(session)
+    user = repository.get_user_by_email(request.email)
+    if user is None or not user.is_active or not password_matches(request.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="incorrect email or password")
+    repository.record_login(user)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
-        value=create_session_token(),
+        value=create_session_token(user.id),
         max_age=SESSION_LIFETIME_SECONDS,
         httponly=True,
         secure=cookie_requires_https(),
         samesite="lax",
         path="/",
     )
-    return {"authenticated": True}
+    return {"authenticated": True, "user": _serialize_user(user)}
 
 
 @app.post("/v1/auth/logout", tags=["access"])
@@ -147,8 +214,66 @@ def logout(response: Response) -> dict[str, bool]:
     return {"authenticated": False}
 
 
-def get_session() -> Generator[Session, None, None]:
-    yield from database.session()
+@app.post("/v1/auth/password", tags=["access"])
+def change_password(request: PasswordChangeRequest, http_request: Request, session: Session = Depends(get_session)) -> dict[str, bool]:
+    user = current_user(http_request)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="sign in required")
+    repository = Repository(session)
+    stored = repository.get_user(user.id)
+    if stored is None or not password_matches(request.current_password, stored.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="current password is incorrect")
+    repository.update_user(stored, password_hash=hash_password(request.new_password))
+    return {"changed": True}
+
+
+@app.get("/v1/users", tags=["access"])
+def list_users(request: Request, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    require_admin(request)
+    return [_serialize_user(user) for user in Repository(session).list_users()]
+
+
+@app.post("/v1/users", tags=["access"], status_code=status.HTTP_201_CREATED)
+def create_user(body: UserCreateRequest, request: Request, session: Session = Depends(get_session)) -> dict[str, Any]:
+    require_admin(request)
+    repository = Repository(session)
+    if repository.get_user_by_email(body.email) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="a user with that email already exists")
+    return _serialize_user(repository.create_user(email=body.email, name=body.name, password_hash=hash_password(body.password), role=body.role))
+
+
+@app.patch("/v1/users/{user_id}", tags=["access"])
+def update_user(user_id: str, body: UserUpdateRequest, request: Request, session: Session = Depends(get_session)) -> dict[str, Any]:
+    admin = require_admin(request)
+    repository = Repository(session)
+    user = repository.get_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if user.id == admin.id and (body.is_active is False or (body.role is not None and body.role != "admin")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="an administrator cannot deactivate or demote their own account")
+    return _serialize_user(
+        repository.update_user(
+            user,
+            name=body.name,
+            role=body.role,
+            is_active=body.is_active,
+            password_hash=hash_password(body.password) if body.password else None,
+        )
+    )
+
+
+def _serialize_user(user: UserRecord) -> dict[str, Any]:
+    return _serialize(
+        {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "role": user.role,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "last_login_at": user.last_login_at,
+        }
+    )
 
 
 @app.post("/v1/underwriting", tags=["calculations"])
@@ -353,6 +478,38 @@ async def import_underwriting_workbook(file: UploadFile = File(...)) -> dict[str
     )
 
 
+@app.get("/v1/imports/data-sheet-template", tags=["imports"])
+def data_sheet_template_download() -> StreamingResponse:
+    """Download the one-page Deal Scope Data Sheet to append to any packet."""
+    return StreamingResponse(
+        data_sheet_template_pdf(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=deal-scope-data-sheet.pdf"},
+    )
+
+
+@app.post("/v1/imports/deal-packet", tags=["imports"])
+async def import_deal_packet(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Read a PDF deal packet (offering memorandum) that includes a Deal Scope Data Sheet."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="upload a .pdf deal packet")
+    try:
+        imported = parse_deal_packet(await file.read())
+        _to_underwriting_assumptions(imported.underwriting)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return _serialize(
+        {
+            "underwriting": imported.underwriting.model_dump(),
+            "supporting_detail": imported.supporting_detail.model_dump(),
+            "version": imported.version,
+            "targets": imported.targets,
+            "warnings": imported.warnings,
+            "sources": imported.sources,
+        }
+    )
+
+
 @app.post("/v1/exports/excel", tags=["exports"])
 def export_excel(request: ExportRequest):
     """Export the full analyst workbook for the case at the request's purchase price."""
@@ -418,9 +575,9 @@ def _export_inputs(request: ExportRequest):
 
 
 @app.post("/v1/deals", tags=["deals"], status_code=status.HTTP_201_CREATED)
-def create_deal(request: DealCreateRequest, session: Session = Depends(get_session)) -> dict[str, Any]:
+def create_deal(request: DealCreateRequest, http_request: Request, session: Session = Depends(get_session)) -> dict[str, Any]:
     """Create a deal container for immutable assumption-set versions."""
-    return _serialize_deal(Repository(session).create_deal(request.name))
+    return _serialize_deal(Repository(session).create_deal(request.name, created_by=_actor(http_request)))
 
 
 @app.get("/v1/deals", tags=["deals"])
@@ -515,6 +672,7 @@ def compare_deal_scenarios(
 def create_assumption_set(
     deal_id: str,
     request: AssumptionSetCreateRequest,
+    http_request: Request,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Version a deal's inputs; existing versions are never edited."""
@@ -534,6 +692,7 @@ def create_assumption_set(
         value_bucket=request.value_bucket,
         inputs=_serialize(request.underwriting.model_dump()),
         supporting_detail=_serialize(request.supporting_detail.model_dump()) if request.supporting_detail is not None else None,
+        created_by=_actor(http_request),
     )
     return _serialize_assumption_set(assumptions)
 
@@ -793,7 +952,7 @@ def _require_assumption_set(repository: Repository, assumption_set_id: str) -> A
 
 
 def _serialize_deal(deal: DealRecord) -> dict[str, Any]:
-    return _serialize({"id": deal.id, "name": deal.name, "created_at": deal.created_at, "updated_at": deal.updated_at})
+    return _serialize({"id": deal.id, "name": deal.name, "created_by": deal.created_by, "created_at": deal.created_at, "updated_at": deal.updated_at})
 
 
 def _serialize_deal_summary(summary) -> dict[str, Any]:
@@ -850,6 +1009,7 @@ def _serialize_assumption_set(assumptions: AssumptionSetRecord) -> dict[str, Any
             "value_bucket": assumptions.value_bucket,
             "underwriting": assumptions.inputs,
             "supporting_detail": assumptions.supporting_detail,
+            "created_by": assumptions.created_by,
             "created_at": assumptions.created_at,
         }
     )

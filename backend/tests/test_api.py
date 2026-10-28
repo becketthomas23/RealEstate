@@ -37,7 +37,7 @@ class ApiTests(unittest.TestCase):
         response = client.get("/health")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        self.assertEqual(response.json(), {"status": "ok", "product": "Deal Scope"})
 
     def test_local_frontend_origin_is_allowed(self) -> None:
         response = client.options(

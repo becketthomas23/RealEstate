@@ -1,6 +1,7 @@
-# CRE Reverse-Solver Underwriting App
+# Deal Scope
 
-A transparent commercial real estate underwriting tool that answers:
+Deal Scope is a commercial real estate underwriting product for acquisition
+teams. It answers one question with a defensible audit trail:
 
 > Given a target return and risk constraints, what is the maximum price to pay for a property?
 
@@ -17,7 +18,31 @@ This README is a living project document. Update it as the application, technica
 
 ## Latest update
 
-This release raises the analyst deliverables to institutional grade:
+This release packages the application as **Deal Scope**, a product a team can
+sign in to and demonstrate end to end:
+
+- **Accounts and sign-in.** Administrator-managed user accounts (PBKDF2
+  password hashes, signed expiring session cookies, admin and analyst roles),
+  a branded sign-in page, a Team and access page for administrators, a
+  password-change page, and authorship recorded on every deal and version.
+  The first administrator is bootstrapped from `APP_ADMIN_EMAIL` /
+  `APP_ADMIN_PASSWORD`; the local launcher enables sign-in with a demo
+  administrator (`admin@dealscope.local` / `dealscope-demo`) unless started
+  with `-OpenAccess`.
+- **Deal packet import.** A PDF offering memorandum that carries a one-page
+  **Deal Scope Data Sheet** (plain `Label: Value` lines plus rent roll, other
+  income and expense tables) is read straight into a version; the blank sheet
+  is downloadable from the Inputs tab so any broker packet can be made
+  importable. Labels share the Excel template's aliases.
+- **Demo kit** in `demo/`: a 13-page mock offering memorandum for Maple
+  Street Apartments (fictional) with the data sheet as Appendix A and the
+  model's data requirements as Appendix B, the matching Excel import, and a
+  demo script.
+- **Same-origin everywhere.** The Next.js dev server proxies the API so the
+  session cookie works locally exactly as it does in the one-service
+  deployment.
+
+The previous release raised the analyst deliverables to institutional grade:
 
 - **Excel import template** (`GET /v1/imports/underwriting-workbook-template`):
   a five-sheet workbook with flexible, alias-matched assumption labels, a rent
@@ -217,7 +242,9 @@ Deal
 
 ## Development Setup
 
-From the project root, start the complete local application with one command:
+From the project root, start the complete local application with one command.
+It enables sign-in with a demo administrator and prints the credentials; add
+`-OpenAccess` to run without the sign-in screen while developing:
 
 ```powershell
 .\scripts\start-local.ps1
@@ -226,7 +253,7 @@ From the project root, start the complete local application with one command:
 It starts the API and frontend in the background, waits for both to be healthy,
 then opens `http://127.0.0.1:3000` in one browser tab. If a new service exits
 or does not become ready, the launcher reports separate frontend/backend log
-paths in the system temporary directory (`cre-underwriting`), rather than
+paths in the system temporary directory (`deal-scope`), rather than
 hiding the cause behind a generic timeout. Use this command when a
 PowerShell execution-policy warning appears:
 
@@ -234,9 +261,9 @@ PowerShell execution-policy warning appears:
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 ```
 
-In VS Code, choose **Terminal > Run Task > Run CRE Underwriting App** for the
+In VS Code, choose **Terminal > Run Task > Run Deal Scope** for the
 same one-click launch. From Windows Explorer, double-click
-**Start CRE Underwriting App.cmd** at the project root; it runs the same script
+**Start Deal Scope.cmd** at the project root; it runs the same script
 and keeps any startup error visible. Stop both local services with:
 
 ```powershell
@@ -331,8 +358,8 @@ frontend into the FastAPI service, so the public site and API share one origin.
 It is configured for a managed PostgreSQL database through `DATABASE_URL`;
 SQLite remains the local-development default. The recommended free deployment
 uses Koyeb for the website and Supabase for PostgreSQL. The deployed site has a
-shared-password screen; its password and session secret are deployment secrets,
-not repository files.
+sign-in screen with administrator-managed accounts; the session secret and the
+first administrator's credentials are deployment secrets, not repository files.
 
 Follow the complete [Koyeb + Supabase deployment guide](docs/deploy-koyeb-supabase.md).
 
