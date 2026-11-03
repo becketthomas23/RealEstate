@@ -87,13 +87,17 @@ RENT_COMPS = (
 )
 
 
-def build(output_dir: Path) -> tuple[Path, Path]:
+def build(output_dir: Path) -> tuple[Path, Path, Path]:
+    """Write the short packet, the Excel import, and the full-length memorandum."""
     output_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = output_dir / "Maple Street Apartments - Offering Memorandum (mock).pdf"
     xlsx_path = output_dir / "maple-street-apartments-import.xlsx"
     _build_pdf(pdf_path)
     xlsx_path.write_bytes(underwriting_workbook_template().getvalue())
-    return pdf_path, xlsx_path
+    from build_full_demo_packet import build_full_memorandum  # noqa: PLC0415  (shares this module's constants)
+
+    full_path = build_full_memorandum(output_dir)
+    return pdf_path, xlsx_path, full_path
 
 
 # ---------------------------------------------------------------- figures
@@ -546,7 +550,6 @@ def _build_pdf(path: Path) -> None:
 
 
 if __name__ == "__main__":
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2] / "demo"
-    pdf, xlsx = build(target)
-    print("wrote", pdf)
-    print("wrote", xlsx)
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
+    for written in build(target):
+        print("wrote", written)

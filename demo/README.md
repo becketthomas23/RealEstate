@@ -10,8 +10,9 @@ story. Every figure, property, market, and firm in these files is invented.
 | --- | --- |
 | `Maple Street Apartments - Offering Memorandum (mock).pdf` | A 13-page mock broker offering memorandum: cover, disclaimer, executive summary, property description, market overview, rent roll, financial summary, expense detail, capital plan, financing overview, comparables, risk factors, and two appendices. Appendix A is the **Deal Scope Data Sheet** that the app reads directly; Appendix B lists what the model needs. |
 | `maple-street-apartments-import.xlsx` | The same deal in the Excel import template (Assumptions, Rent Roll, Other Income, Operating Expenses). |
+| `Maple Street Apartments - Full Offering Memorandum (mock).pdf` | The same deal as a 58-page broker package: confidentiality boilerplate, executive summary, property description, unit-by-unit rent roll, lease expirations, historical and month-by-month operating statements, expense analysis, capital plan, regional economy, demographics, submarket fundamentals, rent and sale comparables with a page each, supply pipeline, lender quotes, taxes and insurance, zoning and condition reports, management, and the offering process. The Deal Scope Data Sheet is Appendix A on page 55. Use it to show how much an analyst reads to produce the two pages the model needs; it imports to exactly the same version as the short packet. |
 
-Regenerate both after changing the generator:
+Regenerate all three after changing the generators (`build_demo_packet.py` holds the deal figures; `build_full_demo_packet.py` imports them):
 
 ```powershell
 cd backend
@@ -52,8 +53,9 @@ appending the blank data sheet (download it from the Inputs tab, or
    administrator credentials. The sign-in page states what the product does.
 2. **Pipeline.** The Deals page lists every deal with its latest solved price,
    returns, and flags. Create a deal named *Maple Street Apartments*.
-3. **Import the packet.** On the Inputs tab choose *Import packet, Excel or
-   CSV* and pick the mock offering memorandum PDF. Point out the notice: the
+3. **Import the packet.** Hold up the 58-page memorandum first: that is what
+   lands in an analyst's inbox. On the Inputs tab choose *Import packet, Excel
+   or CSV* and pick either PDF; the full one makes the point better. Point out the notice: the
    data sheet was read, income and expenses rolled up from the detail tables,
    and the loss-to-lease warning. Open *Rent roll and expenses* to show the
    line items that arrived, and the quick read on the right.

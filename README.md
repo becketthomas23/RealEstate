@@ -34,7 +34,8 @@ sign in to and demonstrate end to end:
   income and expense tables) is read straight into a version; the blank sheet
   is downloadable from the Inputs tab so any broker packet can be made
   importable. Labels share the Excel template's aliases.
-- **Demo kit** in `demo/`: a 13-page mock offering memorandum for Maple
+- **Demo kit** in `demo/`: a 13-page mock offering memorandum and a 58-page
+  full-length version for Maple
   Street Apartments (fictional) with the data sheet as Appendix A and the
   model's data requirements as Appendix B, the matching Excel import, and a
   demo script.
