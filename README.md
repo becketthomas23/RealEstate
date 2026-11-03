@@ -37,8 +37,9 @@ sign in to and demonstrate end to end:
 - **Demo kit** in `demo/`: a 13-page mock offering memorandum and a 58-page
   full-length version for Maple
   Street Apartments (fictional) with the data sheet as Appendix A and the
-  model's data requirements as Appendix B, the matching Excel import, and a
-  demo script.
+  model's data requirements as Appendix B, the matching Excel import, eight
+  example underwritings as importable Excel files in `demo/examples/`, a seed
+  script that loads the same deals into the pipeline, and a demo script.
 - **Same-origin everywhere.** The Next.js dev server proxies the API so the
   session cookie works locally exactly as it does in the one-service
   deployment.

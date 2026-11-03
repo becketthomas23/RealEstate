@@ -2,7 +2,8 @@
 
 Each example is a complete deal: a named property with supporting detail, one
 or two immutable assumption versions, and a solved maximum price, so the Deals
-page shows a realistic pipeline for a demonstration or a fresh install.
+page shows a realistic pipeline for a demonstration or a fresh install. The
+same deals are written as importable Excel files by build_demo_examples.py.
 
     uv run python scripts/seed_examples.py http://127.0.0.1:8000 --reset
     uv run python scripts/seed_examples.py https://your-host --email you@firm.com
@@ -128,7 +129,45 @@ PINE_HOLLOW_DETAIL = {
     "operating_expenses": _expense_lines(236_000, MULTIFAMILY_EXPENSES),
 }
 
+MAPLE_STREET_DETAIL = {
+    "property": {"name": "Maple Street Apartments", "address": "100 Maple Street, Springfield", "units": 48, "rentable_square_feet": "42000", "year_built": 1998, "property_class": "B"},
+    "rent_roll": _rent_roll([("Studio", 8, 480, 1_150, 1_225), ("1 bed / 1 bath", 24, 690, 1_395, 1_450), ("2 bed / 2 bath", 16, 980, 1_795, 1_875)]),
+    "other_income": [{"category": "Parking", "annual_amount": "28800", "note": "48 reserved spaces at $50 per month"}, {"category": "Laundry", "annual_amount": "9600", "note": "Third-party route contract"}, {"category": "Pet rent and fees", "annual_amount": "14400", "note": "Average of trailing twelve months"}],
+    "operating_expenses": [
+        {"category": "Real estate taxes", "annual_amount": "118000", "note": "Trailing; reassessed on sale"}, {"category": "Insurance", "annual_amount": "34000", "note": "Renewed June 2026"}, {"category": "Utilities", "annual_amount": "52000", "note": "Common area and vacant units"},
+        {"category": "Repairs and maintenance", "annual_amount": "48000", "note": "Includes turnover"}, {"category": "Contract services", "annual_amount": "18000", "note": "Landscaping, pest, trash"}, {"category": "Payroll", "annual_amount": "72000", "note": "On-site manager and maintenance"},
+        {"category": "Management fee", "annual_amount": "31000", "note": "3% of effective gross income"}, {"category": "General and administrative", "annual_amount": "12000"}, {"category": "Marketing", "annual_amount": "6000"}, {"category": "Replacement reserves", "annual_amount": "14400", "note": "$300 per unit"},
+    ],
+    "notes": "The demo kit deal. The same figures are in the short and full mock offering memorandums and the Excel import in demo/.",
+}
+
 EXAMPLES: list[dict[str, object]] = [
+    {
+        "name": "Maple Street Apartments",
+        "targets": {"target_levered_irr": "0.12", "minimum_dscr": "1.25"},
+        "versions": [
+            _version(
+                label="Broker OM base case",
+                source="Northgate Capital Advisors offering memorandum, October 2026 (mock)",
+                effective_date="2026-09-30",
+                confidence="medium",
+                property_type="Multifamily",
+                value_bucket="$5M-$10M",
+                price=8_500_000,
+                pgi=909_600,
+                opex=405_400,
+                vacancy="0.05",
+                rent_growth="0.03",
+                expense_growth="0.025",
+                hold=5,
+                ltv="0.60",
+                rate="0.06",
+                amortization=30,
+                exit_cap="0.065",
+                detail=MAPLE_STREET_DETAIL,
+            )
+        ],
+    },
     {
         "name": "Riverbend Commons",
         "targets": {"target_levered_irr": "0.13", "minimum_dscr": "1.25"},

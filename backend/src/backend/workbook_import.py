@@ -8,6 +8,8 @@ rolled up from the Rent Roll, Other Income, and Operating Expenses sheets.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -150,15 +152,33 @@ class WorkbookImport:
 
 
 def underwriting_workbook_template() -> BytesIO:
-    """Build the import template with an example deal filled in."""
+    """Build the import template with the example deal filled in."""
+    return underwriting_workbook()
+
+
+def underwriting_workbook(
+    values: dict[str, Any] | None = None,
+    rent_roll: Iterable[tuple[Any, ...]] | None = None,
+    other_income: Iterable[tuple[Any, ...]] | None = None,
+    expenses: Iterable[tuple[Any, ...]] | None = None,
+) -> BytesIO:
+    """Write a deal in the template layout.
+
+    ``values`` maps assumption keys (``purchase_price``, ``units``, ``label``…)
+    to the value for that row; keys left out keep the template's example
+    value, and a key set to ``None`` leaves the cell blank so the importer
+    rolls it up from the detail sheets. The detail sheets default to the
+    example deal's rows.
+    """
+    overrides = values or {}
     book = Workbook()
     instructions = book.active
     instructions.title = "Instructions"
     _write_instructions(instructions)
     assumptions = book.create_sheet("Assumptions")
     assumptions.append(["Section", "Input", "Value", "Unit", "Notes"])
-    for section, label, value, unit, note, _key in ASSUMPTION_ROWS:
-        assumptions.append([section, label, value, unit, note])
+    for section, label, value, unit, note, key in ASSUMPTION_ROWS:
+        assumptions.append([section, label, overrides.get(key, value), unit, note])
     for row in assumptions.iter_rows(min_row=2):
         row[2].fill = PatternFill("solid", fgColor=INPUT_FILL)
         unit = row[3].value
@@ -173,30 +193,30 @@ def underwriting_workbook_template() -> BytesIO:
     _style_table(assumptions, widths=(14, 36, 22, 10, 64))
     _section_shading(assumptions)
 
-    rent_roll = book.create_sheet("Rent Roll")
-    rent_roll.append(list(RENT_ROLL_COLUMNS))
-    for line in RENT_ROLL_EXAMPLE:
-        rent_roll.append(list(line))
-    for row in rent_roll.iter_rows(min_row=2, min_col=2):
+    rent_roll_sheet = book.create_sheet("Rent Roll")
+    rent_roll_sheet.append(list(RENT_ROLL_COLUMNS))
+    for line in RENT_ROLL_EXAMPLE if rent_roll is None else rent_roll:
+        rent_roll_sheet.append(list(line))
+    for row in rent_roll_sheet.iter_rows(min_row=2, min_col=2):
         for cell in row:
             cell.number_format = "#,##0"
-    _style_table(rent_roll, widths=(24, 10, 20, 22, 22))
+    _style_table(rent_roll_sheet, widths=(24, 10, 20, 22, 22))
 
     income = book.create_sheet("Other Income")
     income.append(list(INCOME_COLUMNS))
-    for line in INCOME_EXAMPLE:
+    for line in INCOME_EXAMPLE if other_income is None else other_income:
         income.append(list(line))
     for cell in income["B"][1:]:
         cell.number_format = "#,##0"
     _style_table(income, widths=(28, 16, 48))
 
-    expenses = book.create_sheet("Operating Expenses")
-    expenses.append(list(EXPENSE_COLUMNS))
-    for line in EXPENSE_EXAMPLE:
-        expenses.append(list(line))
-    for cell in expenses["B"][1:]:
+    expense_sheet = book.create_sheet("Operating Expenses")
+    expense_sheet.append(list(EXPENSE_COLUMNS))
+    for line in EXPENSE_EXAMPLE if expenses is None else expenses:
+        expense_sheet.append(list(line))
+    for cell in expense_sheet["B"][1:]:
         cell.number_format = "#,##0"
-    _style_table(expenses, widths=(32, 16, 48))
+    _style_table(expense_sheet, widths=(32, 16, 48))
 
     output = BytesIO()
     book.save(output)
@@ -269,7 +289,9 @@ def build_import(
             sources["current_potential_gross_income"] = "rolled up from Rent Roll and Other Income"
         else:
             raise ValueError("enter Current potential gross income or complete the Rent Roll sheet")
-    elif rolled_income > 0 and abs(_to_decimal(raw["current_potential_gross_income"]) - rolled_income) > Decimal("1"):
+    elif rent_roll_lines and abs(_to_decimal(raw["current_potential_gross_income"]) - rolled_income) > Decimal("1"):
+        # Other Income alone (recoveries, parking) is never the whole picture;
+        # only a rent roll can be expected to reconcile to the entered income.
         warnings.append(
             f"Current potential gross income ({_to_decimal(raw['current_potential_gross_income']):,.0f}) differs from the Rent Roll plus Other Income roll-up ({rolled_income:,.0f}); the entered figure was used."
         )

@@ -52,14 +52,15 @@ appending the blank data sheet (download it from the Inputs tab, or
 1. **Sign in.** Launch with `.\scripts\start-local.ps1`; it prints the demo
    administrator credentials. The sign-in page states what the product does.
 2. **Pipeline.** The Deals page lists every deal with its latest solved price,
-   returns, and flags. Create a deal named *Maple Street Apartments*.
+   returns, and flags. Open *Maple Street Apartments* (or create it fresh if
+   the seed was run without it).
 3. **Import the packet.** Hold up the 58-page memorandum first: that is what
    lands in an analyst's inbox. On the Inputs tab choose *Import packet, Excel
    or CSV* and pick either PDF; the full one makes the point better. Point out the notice: the
    data sheet was read, income and expenses rolled up from the detail tables,
    and the loss-to-lease warning. Open *Rent roll and expenses* to show the
    line items that arrived, and the quick read on the right.
-4. **Solve.** *Save v1 and solve.* The Pricing tab shows the maximum
+4. **Solve.** *Save and solve.* The Pricing tab shows the maximum
    supportable price against the $8.5M guidance, the bid range, the binding
    constraint, levered and unlevered returns, per-unit metrics, the cash-flow
    chart, and risk flags. Run the one-way sensitivity and the two-way grid.
@@ -75,12 +76,40 @@ appending the blank data sheet (download it from the Inputs tab, or
 9. **Team.** From the account menu open *Team and access* and add an analyst
    account to show roles and the audit trail (versions record who saved them).
 
+## Example deals
+
+`examples/` holds one Excel underwriting per example deal, in the import
+template layout, so anyone can open a complete example or import one from
+the Inputs tab. Eight deals across multifamily, industrial, retail, office,
+and self storage, including Maple Street itself; Pine Hollow Townhomes has
+two versions so the comparison tools have something to compare.
+
+| File | Deal |
+| --- | --- |
+| `maple-street-apartments.xlsx` | Maple Street Apartments, the demo kit deal (48 units, $8.5M ask) |
+| `riverbend-commons.xlsx` | 96-unit garden multifamily, Round Rock |
+| `harbor-point-industrial.xlsx` | 120,000 sf three-tenant warehouse, Savannah |
+| `cedar-plaza-shopping-center.xlsx` | 42,000 sf neighborhood retail, Chandler |
+| `northgate-medical-office.xlsx` | 38,000 sf medical office, Raleigh |
+| `summit-self-storage.xlsx` | 520-unit self storage, Boise |
+| `pine-hollow-townhomes-base-case.xlsx` | 24 townhomes, Greenville, broker base case |
+| `pine-hollow-townhomes-broker-rent-growth.xlsx` | The same deal at the broker's 4.5% rent growth |
+| `westfield-logistics-center.xlsx` | 210,000 sf cross-dock distribution, Columbus |
+
+The files are generated from the same data the seed script uses, and every
+one is parsed back through the importer before it is written:
+
+```powershell
+cd backend
+uv run python scripts/build_demo_examples.py ../demo/examples
+```
+
 ## Example pipeline
 
-`backend/scripts/seed_examples.py` fills the Deals page with seven fictional
-deals across multifamily, industrial, retail, office, and self storage, each
-with supporting detail, one or two versions, and a solved price, so the
-pipeline looks lived-in before the Maple Street walkthrough starts:
+`backend/scripts/seed_examples.py` loads the same eight deals into the
+Deals page through the API, each with supporting detail, one or two
+versions, and a solved price, so the pipeline looks lived-in before the
+walkthrough starts:
 
 ```powershell
 cd backend
@@ -90,8 +119,9 @@ uv run python scripts/seed_examples.py http://127.0.0.1:8000 --reset
 ```
 
 `--reset` deletes every existing deal first. Leave it off to add the examples
-to whatever is already there. Maple Street Apartments is deliberately not
-among them so the live import creates it fresh.
+to whatever is already there. The seeded Maple Street Apartments already
+holds the broker base case as v1; for the live import, open that deal and
+import the packet as v2, or delete it first and create it fresh.
 
 ## Resetting between demos
 
