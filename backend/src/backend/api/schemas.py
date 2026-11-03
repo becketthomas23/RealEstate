@@ -96,6 +96,12 @@ class DealCreateRequest(ApiModel):
         return value
 
 
+class ExamplesLoadRequest(ApiModel):
+    """Load the fictional example deals; ``reset`` deletes every deal first."""
+
+    reset: bool = False
+
+
 class DealRenameRequest(DealCreateRequest):
     """A new display name for an existing deal."""
 

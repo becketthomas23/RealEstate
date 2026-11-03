@@ -1,13 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useState } from "react";
+import { post } from "@/lib/api";
 import { useSession } from "@/lib/auth";
 import { Logo, PRODUCT_NAME } from "./brand";
 import { Badge, cx } from "./ui";
 
 export { PRODUCT_NAME };
+
+/** Fired on window after the example deals are created, with the API outcome as detail. */
+export const EXAMPLES_LOADED_EVENT = "dealscope:examples-loaded";
+export type ExamplesLoaded = { created: string[]; skipped: string[] };
 
 export function Wordmark({ compact }: { compact?: boolean }) {
   return <Logo compact={compact} size={28} className="text-ink" />;
@@ -17,10 +22,27 @@ export function Wordmark({ compact }: { compact?: boolean }) {
 export function AppShell({ children, crumbs, actions }: { children: ReactNode; crumbs?: Array<{ label: string; href?: string }>; actions?: ReactNode }) {
   const session = useSession();
   const router = useRouter();
+  const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [loadingExamples, setLoadingExamples] = useState(false);
+  const [exampleNote, setExampleNote] = useState<string | null>(null);
   async function signOut() {
     await session.signOut();
     router.replace("/login/");
+  }
+  async function loadExamples() {
+    setLoadingExamples(true);
+    setExampleNote(null);
+    try {
+      const outcome = await post<ExamplesLoaded>("/v1/examples", { reset: false });
+      window.dispatchEvent(new CustomEvent<ExamplesLoaded>(EXAMPLES_LOADED_EVENT, { detail: outcome }));
+      setMenuOpen(false);
+      if (pathname !== "/") router.push("/");
+    } catch (caught) {
+      setExampleNote(caught instanceof Error ? caught.message : "Unable to load the example deals.");
+    } finally {
+      setLoadingExamples(false);
+    }
   }
   return (
     <div className="flex min-h-screen flex-col">
@@ -69,6 +91,19 @@ export function AppShell({ children, crumbs, actions }: { children: ReactNode; c
                       <Link href="/team/" role="menuitem" className="block rounded-lg px-2 py-2 text-sm hover:bg-surface-muted" onClick={() => setMenuOpen(false)}>
                         Team and access
                       </Link>
+                    )}
+                    {session.user.role === "admin" && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={loadingExamples}
+                        onClick={() => void loadExamples()}
+                        className="block w-full rounded-lg px-2 py-2 text-left text-sm hover:bg-surface-muted disabled:opacity-60"
+                      >
+                        {loadingExamples ? "Loading example deals…" : "Load example deals"}
+                        <span className="block text-xs text-ink-muted">Eight fictional deals with solved prices</span>
+                        {exampleNote && <span className="block text-xs text-critical">{exampleNote}</span>}
+                      </button>
                     )}
                     <Link href="/account/" role="menuitem" className="block rounded-lg px-2 py-2 text-sm hover:bg-surface-muted" onClick={() => setMenuOpen(false)}>
                       Change password

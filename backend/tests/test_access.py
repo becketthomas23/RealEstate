@@ -122,6 +122,22 @@ class AccessControlTests(unittest.TestCase):
         self.assertEqual(self.sign_in("analyst@example.com", "analyst-pass-2").status_code, 401)
 
 
+    def test_only_administrators_can_load_the_example_deals(self) -> None:
+        self.assertEqual(self.client.post("/v1/examples", json={}).status_code, 401)
+        self.sign_in()
+        created = self.client.post("/v1/users", json={"email": "analyst@example.com", "name": "An Analyst", "password": "analyst-pass-1", "role": "analyst"})
+        self.assertEqual(created.status_code, 201, created.text)
+        self.client.post("/v1/auth/logout", json={})
+        self.sign_in(email="analyst@example.com", password="analyst-pass-1")
+        self.assertEqual(self.client.post("/v1/examples", json={}).status_code, 403)
+        self.client.post("/v1/auth/logout", json={})
+        self.sign_in()
+        response = self.client.post("/v1/examples", json={})
+        self.assertEqual(response.status_code, 201, response.text)
+        deal = self.client.get("/v1/deals").json()[0]
+        self.assertEqual(deal["created_by"], "admin@example.com")
+
+
 class AccessConfigurationTests(unittest.TestCase):
     def test_protected_mode_fails_closed_when_the_session_secret_is_missing(self) -> None:
         with patch.dict(os.environ, {"APP_REQUIRE_AUTH": "true"}, clear=True):

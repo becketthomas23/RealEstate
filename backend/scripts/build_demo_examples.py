@@ -19,10 +19,9 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from seed_examples import EXAMPLES  # noqa: E402
+from backend.examples import EXAMPLE_DEALS as EXAMPLES  # noqa: E402
 from backend.workbook_import import parse_underwriting_workbook, underwriting_workbook  # noqa: E402
 
 

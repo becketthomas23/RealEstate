@@ -12,3 +12,6 @@ tmp/
 
 # Local shell history
 .Rhistory
+
+# Personal Claude Code settings
+.claude/settings.local.json

@@ -336,6 +336,54 @@ class ApiTests(unittest.TestCase):
         self.assertIn("higher bound", response.json()["detail"])
 
 
+class ExampleDealTests(unittest.TestCase):
+    """The example pipeline is created server-side and is safe to load twice."""
+
+    def setUp(self) -> None:
+        self.temp_directory = TemporaryDirectory()
+        self.original_database = api_main.database
+        api_main.database = Database(f"sqlite:///{(Path(self.temp_directory.name) / 'examples.db').as_posix()}")
+        self.client_context = TestClient(api_main.app)
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        api_main.database.dispose()
+        api_main.database = self.original_database
+        self.temp_directory.cleanup()
+
+    def test_loads_every_example_with_a_solved_price_and_skips_repeats(self) -> None:
+        first = self.client.post("/v1/examples", json={"reset": False})
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(len(first.json()["created"]), 8)
+        self.assertEqual(first.json()["skipped"], [])
+
+        deals = self.client.get("/v1/deals").json()
+        self.assertEqual(len(deals), 8)
+        by_name = {deal["name"]: deal for deal in deals}
+        self.assertTrue(all(deal["latest_pricing"] for deal in deals))
+        maple = by_name["Maple Street Apartments"]
+        self.assertEqual(maple["latest_pricing"]["binding_constraint"], "target_levered_irr")
+        self.assertAlmostEqual(float(maple["latest_pricing"]["maximum_purchase_price"]), 7_175_844, delta=1)
+        pine = by_name["Pine Hollow Townhomes"]
+        self.assertEqual(pine["latest_version"]["version"], 2)
+        self.assertEqual(pine["latest_pricing"]["binding_constraint"], "minimum_dscr")
+
+        second = self.client.post("/v1/examples", json={"reset": False})
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.json()["created"], [])
+        self.assertEqual(len(second.json()["skipped"]), 8)
+        self.assertEqual(len(self.client.get("/v1/deals").json()), 8)
+
+    def test_reset_replaces_whatever_was_in_the_pipeline(self) -> None:
+        self.client.post("/v1/deals", json={"name": "Scratch deal"})
+        response = self.client.post("/v1/examples", json={"reset": True})
+        self.assertEqual(response.status_code, 201)
+        names = {deal["name"] for deal in self.client.get("/v1/deals").json()}
+        self.assertNotIn("Scratch deal", names)
+        self.assertEqual(len(names), 8)
+
+
 class PersistedUnderwritingApiTests(unittest.TestCase):
     """Exercise durable deal history separately from the stateless calculator endpoints."""
 

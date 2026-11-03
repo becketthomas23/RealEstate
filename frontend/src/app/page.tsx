@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AppShell, PageHeader } from "@/components/shell";
+import { AppShell, EXAMPLES_LOADED_EVENT, PageHeader, type ExamplesLoaded } from "@/components/shell";
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, Stat, TextInput } from "@/components/ui";
 import { api, del, patch, post } from "@/lib/api";
 import { RequireSession } from "@/lib/auth";
@@ -30,6 +30,7 @@ function DealList() {
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<DealSummary | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -47,6 +48,23 @@ function DealList() {
         setError(caught instanceof Error ? caught.message : "Unable to load deals.");
         setDeals([]);
       });
+  }, []);
+  useEffect(() => {
+    // The account menu creates the example deals; the list refreshes here.
+    function onExamplesLoaded(event: Event) {
+      const outcome = (event as CustomEvent<ExamplesLoaded>).detail;
+      const created = outcome.created.length;
+      setNotice(
+        created
+          ? `Added ${created} example deal${created === 1 ? "" : "s"}${outcome.skipped.length ? `; ${outcome.skipped.length} already in the pipeline` : ""}.`
+          : "Every example deal is already in the pipeline.",
+      );
+      api<DealSummary[]>("/v1/deals")
+        .then((rows) => setDeals(rows))
+        .catch(() => undefined);
+    }
+    window.addEventListener(EXAMPLES_LOADED_EVENT, onExamplesLoaded);
+    return () => window.removeEventListener(EXAMPLES_LOADED_EVENT, onExamplesLoaded);
   }, []);
 
   const visible = useMemo(() => {
@@ -118,6 +136,13 @@ function DealList() {
         <div className="mb-4">
           <Banner tone="error" onDismiss={() => setError(null)}>
             {error}
+          </Banner>
+        </div>
+      )}
+      {notice && (
+        <div className="mb-4">
+          <Banner tone="success" onDismiss={() => setNotice(null)}>
+            {notice}
           </Banner>
         </div>
       )}

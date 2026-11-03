@@ -106,10 +106,12 @@ uv run python scripts/build_demo_examples.py ../demo/examples
 
 ## Example pipeline
 
-`backend/scripts/seed_examples.py` loads the same eight deals into the
-Deals page through the API, each with supporting detail, one or two
-versions, and a solved price, so the pipeline looks lived-in before the
-walkthrough starts:
+An administrator can load the same eight deals into any Deal Scope
+deployment from the account menu at the top right: **Load example deals**
+creates each one server-side with its supporting detail, versions, and a
+solved price, skips any that are already there, and is the way to fill the
+hosted site. `backend/scripts/seed_examples.py` does the same through the
+API from a terminal, with a `--reset` option:
 
 ```powershell
 cd backend

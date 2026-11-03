@@ -35,6 +35,7 @@ from backend.exports.workbook import build_underwriting_workbook
 from backend.workbook_import import parse_underwriting_workbook, underwriting_workbook_template
 from backend.packet_import import data_sheet_template_pdf, parse_deal_packet
 from backend.imports import parse_underwriting_csv, underwriting_csv_template
+from backend.examples import EXAMPLE_DEALS
 from backend.persistence import Database, Repository
 from backend.persistence.models import AssumptionSetRecord, CalculationRunRecord, DealRecord, UserRecord
 from .access import (
@@ -51,6 +52,7 @@ from .access import (
 )
 
 from .schemas import (
+    ExamplesLoadRequest,
     AssumptionSetCreateRequest,
     DealRenameRequest,
     AdvancedSensitivityRequest,
@@ -578,6 +580,57 @@ def _export_inputs(request: ExportRequest):
 def create_deal(request: DealCreateRequest, http_request: Request, session: Session = Depends(get_session)) -> dict[str, Any]:
     """Create a deal container for immutable assumption-set versions."""
     return _serialize_deal(Repository(session).create_deal(request.name, created_by=_actor(http_request)))
+
+
+@app.post("/v1/examples", tags=["deals"], status_code=status.HTTP_201_CREATED)
+def load_example_deals(body: ExamplesLoadRequest, http_request: Request, session: Session = Depends(get_session)) -> dict[str, Any]:
+    """Create the fictional example deals, each with its versions and a solved price.
+
+    Administrators only when sign-in is enabled. Deals whose name already
+    exists are skipped, so the call is safe to repeat; ``reset`` clears the
+    pipeline first.
+    """
+    if access_is_required():
+        require_admin(http_request)
+    repository = Repository(session)
+    actor = _actor(http_request)
+    if body.reset:
+        for deal in repository.list_deals():
+            repository.delete_deal(deal)
+    existing = {deal.name.casefold() for deal in repository.list_deals()}
+    created: list[str] = []
+    skipped: list[str] = []
+    for example in EXAMPLE_DEALS:
+        if example["name"].casefold() in existing:
+            skipped.append(example["name"])
+            continue
+        deal = repository.create_deal(example["name"], created_by=actor)
+        for version in example["versions"]:
+            request = AssumptionSetCreateRequest(**version)
+            assumptions = repository.create_assumption_set(
+                deal=deal,
+                label=request.label,
+                source=request.source,
+                effective_date=request.effective_date,
+                confidence_level=request.confidence_level,
+                property_type=request.property_type,
+                value_bucket=request.value_bucket,
+                inputs=_serialize(request.underwriting.model_dump()),
+                supporting_detail=_serialize(request.supporting_detail.model_dump()) if request.supporting_detail is not None else None,
+                created_by=actor,
+            )
+            constraints = SavedMaximumPriceRequest(**example["targets"])
+            result = solve_maximum_purchase_price(
+                MaximumPriceAssumptions(underwriting=_stored_underwriting_assumptions(assumptions), **constraints.model_dump())
+            )
+            repository.create_completed_run(
+                assumption_set=assumptions,
+                calculation_type="maximum_price",
+                request=_serialize(constraints.model_dump()),
+                result=_serialize(result),
+            )
+        created.append(deal.name)
+    return {"created": created, "skipped": skipped}
 
 
 @app.get("/v1/deals", tags=["deals"])
