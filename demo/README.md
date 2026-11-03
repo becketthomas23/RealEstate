@@ -73,7 +73,25 @@ appending the blank data sheet (download it from the Inputs tab, or
 9. **Team.** From the account menu open *Team and access* and add an analyst
    account to show roles and the audit trail (versions record who saved them).
 
+## Example pipeline
+
+`backend/scripts/seed_examples.py` fills the Deals page with seven fictional
+deals across multifamily, industrial, retail, office, and self storage, each
+with supporting detail, one or two versions, and a solved price, so the
+pipeline looks lived-in before the Maple Street walkthrough starts:
+
+```powershell
+cd backend
+$env:SEED_EMAIL = "admin@dealscope.local"
+$env:SEED_PASSWORD = "dealscope-demo"
+uv run python scripts/seed_examples.py http://127.0.0.1:8000 --reset
+```
+
+`--reset` deletes every existing deal first. Leave it off to add the examples
+to whatever is already there. Maple Street Apartments is deliberately not
+among them so the live import creates it fresh.
+
 ## Resetting between demos
 
-Delete the demo deal from the Deals page (or run the launcher with a fresh
-database file). The import leaves nothing behind until *Save and solve*.
+Re-run the seed command above with `--reset`, or delete the demo deal from
+the Deals page. The import leaves nothing behind until *Save and solve*.
