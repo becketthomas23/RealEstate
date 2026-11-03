@@ -4,19 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ReactNode, useState } from "react";
 import { useSession } from "@/lib/auth";
+import { Logo, PRODUCT_NAME } from "./brand";
 import { Badge, cx } from "./ui";
 
-export const PRODUCT_NAME = "Deal Scope";
+export { PRODUCT_NAME };
 
 export function Wordmark({ compact }: { compact?: boolean }) {
-  return (
-    <span className="flex items-center gap-2 font-semibold tracking-tight text-ink">
-      <span aria-hidden className="grid h-7 w-7 place-items-center rounded-lg bg-primary text-[11px] font-bold text-on-primary">
-        DS
-      </span>
-      {!compact && <span>{PRODUCT_NAME}</span>}
-    </span>
-  );
+  return <Logo compact={compact} size={28} className="text-ink" />;
 }
 
 /** Top navigation and page frame shared by every screen. */

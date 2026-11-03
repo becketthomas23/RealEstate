@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BootScreen } from "@/components/brand";
 import { SessionProvider } from "@/lib/auth";
 import "./globals.css";
 
@@ -11,7 +12,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased">
       <body suppressHydrationWarning className="min-h-full">
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          <BootScreen />
+          {children}
+        </SessionProvider>
       </body>
     </html>
   );

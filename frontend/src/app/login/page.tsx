@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Logo } from "@/components/brand";
 import { Wordmark } from "@/components/shell";
 import { Banner, Button, Field, TextInput } from "@/components/ui";
 import { post } from "@/lib/api";
@@ -36,12 +37,7 @@ export default function Login() {
   return (
     <main className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       <section className="hidden flex-col justify-between bg-panel p-10 text-panel-ink lg:flex">
-        <span className="flex items-center gap-2 font-semibold tracking-tight">
-          <span aria-hidden className="grid h-8 w-8 place-items-center rounded-lg bg-panel-accent text-[12px] font-bold text-panel">
-            DS
-          </span>
-          Deal Scope
-        </span>
+        <Logo tone="dark" size={36} className="text-panel-ink" />
         <div className="max-w-md">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-panel-accent">Commercial real estate underwriting</p>
           <h1 className="mt-3 text-3xl font-semibold leading-tight tracking-tight">Price every deal to your return target, with the audit trail to defend it.</h1>
