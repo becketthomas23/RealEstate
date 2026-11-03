@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AppShell, EXAMPLES_LOADED_EVENT, PageHeader, type ExamplesLoaded } from "@/components/shell";
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, Stat, TextInput } from "@/components/ui";
 import { api, del, patch, post } from "@/lib/api";
-import { RequireSession } from "@/lib/auth";
+import { RequireSession, useSession } from "@/lib/auth";
 import { constraintLabel, money, multiple, percent, shortDate } from "@/lib/format";
 import type { Deal, DealSummary } from "@/lib/types";
 
@@ -21,6 +21,9 @@ export default function DealListPage() {
 
 function DealList() {
   const router = useRouter();
+  const session = useSession();
+  // Administrators see every pipeline, so the owner matters to them.
+  const showOwner = session.required && session.user?.role === "admin";
   const [deals, setDeals] = useState<DealSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -124,7 +127,11 @@ function DealList() {
     <AppShell crumbs={[{ label: "Deals" }]}>
       <PageHeader
         title="Deals"
-        description="Each deal keeps immutable assumption versions and every solved price, so a bid can always be traced back to the inputs that produced it."
+        description={
+          showOwner
+            ? "Every pipeline in the workspace. Each person sees only the deals they created; administrators see them all."
+            : "Each deal keeps immutable assumption versions and every solved price, so a bid can always be traced back to the inputs that produced it."
+        }
         actions={
           <Button onClick={() => setCreating(true)} size="lg">
             + New deal
@@ -237,8 +244,9 @@ function DealList() {
                         ) : (
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-ink">{deal.name}</p>
-                            <p className="mt-0.5 text-xs text-ink-muted">
+                            <p className="mt-0.5 truncate text-xs text-ink-muted">
                               {version ? version.property_type + " · " + version.value_bucket : "No versions saved"}
+                              {showOwner && deal.created_by ? " · " + deal.created_by : ""}
                             </p>
                           </div>
                         )}

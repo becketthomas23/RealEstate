@@ -131,6 +131,14 @@ MAPLE_STREET_DETAIL = {
     "notes": "The demo kit deal. The same figures are in the short and full mock offering memorandums and the Excel import in demo/.",
 }
 
+STARTER_DEAL_NAME = "Maple Street Apartments"
+
+
+def starter_example() -> dict[str, Any]:
+    """The deal every new account starts with: the demo kit's Maple Street."""
+    return next(example for example in EXAMPLE_DEALS if example["name"] == STARTER_DEAL_NAME)
+
+
 EXAMPLE_DEALS: list[dict[str, Any]] = [
     {
         "name": "Maple Street Apartments",

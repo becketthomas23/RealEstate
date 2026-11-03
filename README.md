@@ -25,6 +25,10 @@ sign in to and demonstrate end to end:
   password hashes, signed expiring session cookies, admin and analyst roles),
   a branded sign-in page, a Team and access page for administrators, a
   password-change page, and authorship recorded on every deal and version.
+  Each person has their own pipeline and sees only the deals they created;
+  administrators see every pipeline. Every new account starts with its own
+  copy of the Maple Street example deal, and deals made before sign-in was
+  enabled pass to the first administrator.
   The first administrator is bootstrapped from `APP_ADMIN_EMAIL` /
   `APP_ADMIN_PASSWORD`; the local launcher enables sign-in with a demo
   administrator (`admin@dealscope.local` / `dealscope-demo`) unless started

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import backend.api.main as api_main
 from backend.api.access import hash_password, password_matches, validate_access_configuration
-from backend.persistence import Database
+from backend.persistence import Database, Repository
 
 
 UNDERWRITING_REQUEST = {
@@ -136,6 +136,68 @@ class AccessControlTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         deal = self.client.get("/v1/deals").json()[0]
         self.assertEqual(deal["created_by"], "admin@example.com")
+
+
+    def test_each_person_gets_a_starter_deal_and_sees_only_their_own_pipeline(self) -> None:
+        self.sign_in()
+        admin_deals = self.client.get("/v1/deals").json()
+        self.assertEqual([deal["name"] for deal in admin_deals], ["Maple Street Apartments"])
+        self.assertEqual(admin_deals[0]["created_by"], "admin@example.com")
+        self.assertTrue(admin_deals[0]["latest_pricing"])
+        admin_version_id = admin_deals[0]["latest_version"]["id"]
+        private = self.client.post("/v1/deals", json={"name": "Admin only"}).json()
+        self.client.post("/v1/users", json={"email": "analyst@example.com", "name": "An Analyst", "password": "analyst-pass-1", "role": "analyst"})
+        self.client.post("/v1/auth/logout", json={})
+
+        self.sign_in(email="analyst@example.com", password="analyst-pass-1")
+        analyst_deals = self.client.get("/v1/deals").json()
+        self.assertEqual([deal["name"] for deal in analyst_deals], ["Maple Street Apartments"])
+        self.assertEqual(analyst_deals[0]["created_by"], "analyst@example.com")
+        self.assertNotEqual(analyst_deals[0]["id"], admin_deals[0]["id"])
+        # Another person's deal and version are invisible, not merely forbidden.
+        self.assertEqual(self.client.get(f"/v1/deals/{private['id']}").status_code, 404)
+        self.assertEqual(self.client.delete(f"/v1/deals/{private['id']}").status_code, 404)
+        self.assertEqual(self.client.get(f"/v1/assumption-sets/{admin_version_id}").status_code, 404)
+        # Signing in again does not add a second starter.
+        self.client.post("/v1/auth/logout", json={})
+        self.sign_in(email="analyst@example.com", password="analyst-pass-1")
+        self.assertEqual(len(self.client.get("/v1/deals").json()), 1)
+        self.client.post("/v1/auth/logout", json={})
+
+        self.sign_in()
+        names = sorted(deal["name"] for deal in self.client.get("/v1/deals").json())
+        self.assertEqual(names, ["Admin only", "Maple Street Apartments", "Maple Street Apartments"])
+        self.assertEqual(self.client.get(f"/v1/deals/{analyst_deals[0]['id']}").status_code, 200)
+
+
+class BootstrapOwnershipTests(unittest.TestCase):
+    """Deals created before sign-in was switched on belong to the first administrator."""
+
+    def setUp(self) -> None:
+        self.temp_directory = TemporaryDirectory()
+        self.original_database = api_main.database
+        api_main.database = Database(f"sqlite:///{(Path(self.temp_directory.name) / 'legacy.db').as_posix()}")
+        api_main.database.upgrade_schema()
+        for session in api_main.database.session():
+            Repository(session).create_deal("Legacy deal")
+            break
+        self.environment = patch.dict(os.environ, PROTECTED_ENVIRONMENT, clear=False)
+        self.environment.start()
+        self.client_context = TestClient(api_main.app)
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        self.environment.stop()
+        api_main.database.dispose()
+        api_main.database = self.original_database
+        self.temp_directory.cleanup()
+
+    def test_first_administrator_inherits_unowned_deals_and_gets_no_extra_starter(self) -> None:
+        self.client.post("/v1/auth/login", json={"email": "admin@example.com", "password": "demo-password-1"})
+        deals = self.client.get("/v1/deals").json()
+        self.assertEqual([deal["name"] for deal in deals], ["Legacy deal"])
+        self.assertEqual(deals[0]["created_by"], "admin@example.com")
 
 
 class AccessConfigurationTests(unittest.TestCase):

@@ -73,12 +73,28 @@ class Repository:
         self.session.refresh(deal)
         return deal
 
-    def list_deals(self) -> list[DealRecord]:
-        return list(self.session.scalars(select(DealRecord).order_by(DealRecord.updated_at.desc(), DealRecord.created_at.desc())))
+    def list_deals(self, owner: str | None = None) -> list[DealRecord]:
+        """Every deal, newest first, or only the deals ``owner`` created."""
+        query = select(DealRecord).order_by(DealRecord.updated_at.desc(), DealRecord.created_at.desc())
+        if owner is not None:
+            query = query.where(DealRecord.created_by == owner)
+        return list(self.session.scalars(query))
 
-    def list_deal_summaries(self) -> list[DealSummary]:
+    def count_deals_owned_by(self, owner: str) -> int:
+        return len(self.list_deals(owner))
+
+    def assign_unowned_deals(self, owner: str) -> int:
+        """Give every deal created before sign-in existed to ``owner``; returns how many."""
+        unowned = [deal for deal in self.list_deals() if deal.created_by is None]
+        for deal in unowned:
+            deal.created_by = owner
+        if unowned:
+            self.session.commit()
+        return len(unowned)
+
+    def list_deal_summaries(self, owner: str | None = None) -> list[DealSummary]:
         summaries = []
-        for deal in self.list_deals():
+        for deal in self.list_deals(owner):
             versions = self.list_assumption_sets(deal.id)
             latest = versions[0] if versions else None
             pricing_run = None

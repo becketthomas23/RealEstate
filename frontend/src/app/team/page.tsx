@@ -177,7 +177,7 @@ function TeamScreen() {
             </div>
           )}
         </Card>
-        <Card title="Add a member" description="Create the account, then share the password with the person directly.">
+        <Card title="Add a member" description="Create the account, then share the password with the person directly. Each new member starts with their own copy of the Maple Street example deal and sees only the deals they create.">
           <form onSubmit={createUser} className="space-y-4">
             <Field label="Name">
               <TextInput required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />

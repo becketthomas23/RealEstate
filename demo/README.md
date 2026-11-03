@@ -106,6 +106,11 @@ uv run python scripts/build_demo_examples.py ../demo/examples
 
 ## Example pipeline
 
+With sign-in on, every account starts with its own copy of Maple Street
+Apartments and sees only its own deals, so each person can run the
+walkthrough without disturbing anyone else; administrators see every
+pipeline.
+
 An administrator can load the same eight deals into any Deal Scope
 deployment from the account menu at the top right: **Load example deals**
 creates each one server-side with its supporting detail, versions, and a

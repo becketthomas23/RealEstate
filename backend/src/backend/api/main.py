@@ -1,6 +1,7 @@
 """FastAPI application for the CRE reverse-solver backend."""
 
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -35,7 +36,7 @@ from backend.exports.workbook import build_underwriting_workbook
 from backend.workbook_import import parse_underwriting_workbook, underwriting_workbook_template
 from backend.packet_import import data_sheet_template_pdf, parse_deal_packet
 from backend.imports import parse_underwriting_csv, underwriting_csv_template
-from backend.examples import EXAMPLE_DEALS
+from backend.examples import EXAMPLE_DEALS, starter_example
 from backend.persistence import Database, Repository
 from backend.persistence.models import AssumptionSetRecord, CalculationRunRecord, DealRecord, UserRecord
 from .access import (
@@ -106,7 +107,9 @@ def _bootstrap_first_admin() -> None:
         if credentials is None:
             raise RuntimeError("APP_ADMIN_EMAIL and APP_ADMIN_PASSWORD are required to create the first user when APP_REQUIRE_AUTH is enabled")
         email, name, password = credentials
-        repository.create_user(email=email, name=name, password_hash=hash_password(password), role="admin")
+        admin = repository.create_user(email=email, name=name, password_hash=hash_password(password), role="admin")
+        # Deals made while sign-in was off have no owner; the first administrator inherits them.
+        repository.assign_unowned_deals(admin.email)
 
 
 app = FastAPI(
@@ -124,6 +127,11 @@ app.add_middleware(
 )
 
 
+# The signed-in user for the request being handled, so deal lookups deep in a
+# handler can check ownership without threading the request through every call.
+_viewer: ContextVar[UserRecord | None] = ContextVar("viewer", default=None)
+
+
 class AccessMiddleware(BaseHTTPMiddleware):
     """Resolve the signed-in user and protect everything but the public paths."""
 
@@ -132,15 +140,17 @@ class AccessMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         request.state.user = None
-        if not access_is_required():
-            return await call_next(request)
-        user = _resolve_user(request.cookies.get(SESSION_COOKIE_NAME))
+        user = _resolve_user(request.cookies.get(SESSION_COOKIE_NAME)) if access_is_required() else None
         request.state.user = user
-        if path in self.public_paths or path.startswith("/_next/") or user is not None:
-            return await call_next(request)
-        if path.startswith("/v1/"):
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "sign in required"})
-        return RedirectResponse(url="/login/", status_code=status.HTTP_303_SEE_OTHER)
+        token = _viewer.set(user)
+        try:
+            if not access_is_required() or path in self.public_paths or path.startswith("/_next/") or user is not None:
+                return await call_next(request)
+            if path.startswith("/v1/"):
+                return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "sign in required"})
+            return RedirectResponse(url="/login/", status_code=status.HTTP_303_SEE_OTHER)
+        finally:
+            _viewer.reset(token)
 
 
 app.add_middleware(AccessMiddleware)
@@ -198,6 +208,7 @@ def login(request: LoginRequest, response: Response, session: Session = Depends(
     if user is None or not user.is_active or not password_matches(request.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="incorrect email or password")
     repository.record_login(user)
+    _ensure_starter_deal(repository, user)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=create_session_token(user.id),
@@ -597,46 +608,64 @@ def load_example_deals(body: ExamplesLoadRequest, http_request: Request, session
     if body.reset:
         for deal in repository.list_deals():
             repository.delete_deal(deal)
-    existing = {deal.name.casefold() for deal in repository.list_deals()}
+    # Administrators load into their own pipeline; with sign-in off the pipeline is shared.
+    existing = {deal.name.casefold() for deal in repository.list_deals(actor)}
     created: list[str] = []
     skipped: list[str] = []
     for example in EXAMPLE_DEALS:
         if example["name"].casefold() in existing:
             skipped.append(example["name"])
             continue
-        deal = repository.create_deal(example["name"], created_by=actor)
-        for version in example["versions"]:
-            request = AssumptionSetCreateRequest(**version)
-            assumptions = repository.create_assumption_set(
-                deal=deal,
-                label=request.label,
-                source=request.source,
-                effective_date=request.effective_date,
-                confidence_level=request.confidence_level,
-                property_type=request.property_type,
-                value_bucket=request.value_bucket,
-                inputs=_serialize(request.underwriting.model_dump()),
-                supporting_detail=_serialize(request.supporting_detail.model_dump()) if request.supporting_detail is not None else None,
-                created_by=actor,
-            )
-            constraints = SavedMaximumPriceRequest(**example["targets"])
-            result = solve_maximum_purchase_price(
-                MaximumPriceAssumptions(underwriting=_stored_underwriting_assumptions(assumptions), **constraints.model_dump())
-            )
-            repository.create_completed_run(
-                assumption_set=assumptions,
-                calculation_type="maximum_price",
-                request=_serialize(constraints.model_dump()),
-                result=_serialize(result),
-            )
-        created.append(deal.name)
+        created.append(_create_example_deal(repository, example, actor).name)
     return {"created": created, "skipped": skipped}
 
 
+def _create_example_deal(repository: Repository, example: dict[str, Any], actor: str | None) -> DealRecord:
+    """Create one example deal with its versions and a solved maximum price."""
+    deal = repository.create_deal(example["name"], created_by=actor)
+    for version in example["versions"]:
+        request = AssumptionSetCreateRequest(**version)
+        assumptions = repository.create_assumption_set(
+            deal=deal,
+            label=request.label,
+            source=request.source,
+            effective_date=request.effective_date,
+            confidence_level=request.confidence_level,
+            property_type=request.property_type,
+            value_bucket=request.value_bucket,
+            inputs=_serialize(request.underwriting.model_dump()),
+            supporting_detail=_serialize(request.supporting_detail.model_dump()) if request.supporting_detail is not None else None,
+            created_by=actor,
+        )
+        constraints = SavedMaximumPriceRequest(**example["targets"])
+        result = solve_maximum_purchase_price(
+            MaximumPriceAssumptions(underwriting=_stored_underwriting_assumptions(assumptions), **constraints.model_dump())
+        )
+        repository.create_completed_run(
+            assumption_set=assumptions,
+            calculation_type="maximum_price",
+            request=_serialize(constraints.model_dump()),
+            result=_serialize(result),
+        )
+    return deal
+
+
+def _ensure_starter_deal(repository: Repository, user: UserRecord) -> None:
+    """Give a person with an empty pipeline their own copy of the Maple Street example."""
+    if repository.count_deals_owned_by(user.email) == 0:
+        _create_example_deal(repository, starter_example(), user.email)
+
+
 @app.get("/v1/deals", tags=["deals"])
-def list_deals(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    """List deals newest-first with their latest version and latest solved price."""
-    return [_serialize_deal_summary(summary) for summary in Repository(session).list_deal_summaries()]
+def list_deals(http_request: Request, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    """List the viewer's deals newest-first with their latest version and latest solved price.
+
+    Each person sees the deals they created; administrators see everyone's.
+    With sign-in off there is one shared pipeline.
+    """
+    user = current_user(http_request)
+    owner = user.email if access_is_required() and user is not None and user.role != "admin" else None
+    return [_serialize_deal_summary(summary) for summary in Repository(session).list_deal_summaries(owner=owner)]
 
 
 @app.patch("/v1/deals/{deal_id}", tags=["deals"])
@@ -990,10 +1019,22 @@ def _stored_underwriting_assumptions(
     return underwriting if purchase_price is None else replace(underwriting, purchase_price=purchase_price)
 
 
+def _authorize_deal(deal: DealRecord) -> None:
+    """Only the deal's creator or an administrator may see it; others get 404, not 403, so nothing leaks."""
+    if not access_is_required():
+        return
+    viewer = _viewer.get()
+    if viewer is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="sign in required")
+    if viewer.role != "admin" and deal.created_by != viewer.email:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="deal not found")
+
+
 def _require_deal(repository: Repository, deal_id: str) -> DealRecord:
     deal = repository.get_deal(deal_id)
     if deal is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="deal not found")
+    _authorize_deal(deal)
     return deal
 
 
@@ -1001,6 +1042,9 @@ def _require_assumption_set(repository: Repository, assumption_set_id: str) -> A
     assumptions = repository.get_assumption_set(assumption_set_id)
     if assumptions is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="assumption set not found")
+    deal = repository.get_deal(assumptions.deal_id)
+    if deal is not None:
+        _authorize_deal(deal)
     return assumptions
 
 
